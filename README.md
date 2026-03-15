@@ -2,6 +2,11 @@
 
 Technitium DNS App for remote-managed DNS rewrite rules.
 
+Current release focus:
+- drop-in support for remote AdGuard-style `dns.txt` rewrite rules
+- live Technitium install/config/query/uninstall verification
+- cached request-path benchmarking for future regressions
+
 It is meant for the part Technitium does not handle natively:
 - AdGuard-style `$dnsrewrite=` rules
 - hostname globs like `*.example` or `edge*.example`
@@ -11,6 +16,11 @@ Use native Technitium features for:
 - block/allow lists
 - allowed zones
 - conditional forwarders
+
+Do not use this app for:
+- normal blocklist filtering
+- allowlist exceptions
+- forwarding a domain to another upstream DNS server
 
 ## Features
 
@@ -27,6 +37,23 @@ Use native Technitium features for:
   - `CNAME`
 - supports direct AdGuard-style `dns.txt` input
 - supports generated `rewrite-rules.json` input
+
+## Verified behavior
+
+The current app state is verified by:
+- unit tests for parsing, matching, Split Horizon compatibility, and APP request handling
+- a live smoke test against a real `technitium/dns-server` container
+- benchmark runs for parser, matcher, and cached request throughput
+
+Live smoke coverage currently includes:
+- app install through Technitium HTTP API
+- app config save/reload
+- primary zone creation
+- `APP` record creation
+- live suffix rewrite resolution
+- live glob rewrite resolution
+- live regex rewrite resolution
+- uninstall cleanup verification
 
 ## Source formats
 
@@ -127,6 +154,19 @@ Fields:
 - `groupNames`: optional group filter
 - `overrideTtl`: optional per-record TTL
 
+## Quick start
+
+1. Package the app:
+
+```bash
+sh scripts/package-app.sh
+```
+
+2. Install `dist/RemoteRewriteApp.zip` in Technitium.
+3. Configure one or more remote sources in `dnsApp.config`.
+4. Add `APP` records for the domains or wildcard scopes that should use rewrite handling.
+5. Keep normal blocklists and conditional forwarders in native Technitium features.
+
 ## Build
 
 Prepare official Technitium DLLs:
@@ -184,6 +224,11 @@ The benchmark harness is meant for future regression checks. It currently report
 - parser throughput for large AdGuard filter input
 - parser throughput for large rewrite manifest input
 - cached steady-state request throughput for suffix, glob, and regex rewrites through `ProcessRequestAsync`
+
+This is the benchmark shape that matters operationally:
+- initialize once
+- fetch remote rules once
+- measure many repeated requests against the in-memory cached rule set
 
 ## Install
 
