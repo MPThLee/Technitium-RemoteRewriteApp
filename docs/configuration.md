@@ -12,6 +12,7 @@ Example:
 {
   "appPreference": 100,
   "enable": true,
+  "globalMode": true,
   "defaultTtl": 300,
   "refreshSeconds": 300,
   "splitHorizon": {
@@ -55,6 +56,7 @@ Example:
 
 ## Source fields
 
+- `globalMode`: enable global rewrite interception without per-zone setup
 - `name`: source id used for filtering
 - `enable`: source toggle
 - `format`: `adguard-filter` or `rewrite-rules-json`
@@ -63,6 +65,10 @@ Example:
 - `groupNames`: optional group scoping
 
 ## APP-record config
+
+APP records are optional.
+
+Use them only when you want scoped behavior on top of the default global matching path.
 
 Example:
 
@@ -106,4 +112,3 @@ Inline `text` supports multiple lines:
 ||one.example^$dnsrewrite=192.0.2.10
 ||two.example^$dnsrewrite=192.0.2.20
 ```
-

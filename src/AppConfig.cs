@@ -12,6 +12,7 @@ internal sealed class AppConfig
     {
         Enable = true,
         AppPreference = 100,
+        GlobalMode = true,
         DefaultTtl = 300,
         RefreshSeconds = 300,
         Sources = Array.Empty<SourceConfig>(),
@@ -20,6 +21,7 @@ internal sealed class AppConfig
 
     public bool Enable { get; private set; }
     public byte AppPreference { get; private set; }
+    public bool GlobalMode { get; private set; }
     public uint DefaultTtl { get; private set; }
     public int RefreshSeconds { get; private set; }
     public SourceConfig[] Sources { get; private set; }
@@ -34,6 +36,7 @@ internal sealed class AppConfig
         {
             Enable = root.TryGetProperty("enable", out JsonElement enable) ? enable.GetBoolean() : true,
             AppPreference = root.TryGetProperty("appPreference", out JsonElement appPreference) ? appPreference.GetByte() : (byte)100,
+            GlobalMode = root.TryGetProperty("globalMode", out JsonElement globalMode) ? globalMode.GetBoolean() : true,
             DefaultTtl = root.TryGetProperty("defaultTtl", out JsonElement defaultTtl) ? defaultTtl.GetUInt32() : 300u,
             RefreshSeconds = root.TryGetProperty("refreshSeconds", out JsonElement refreshSeconds) ? refreshSeconds.GetInt32() : 300,
             Sources = root.TryGetProperty("sources", out JsonElement sources)

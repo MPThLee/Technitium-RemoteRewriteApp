@@ -8,6 +8,8 @@ It exists for rewrite cases that do not fit native Technitium features well:
 - regex rewrites
 - Split Horizon-aware rewrite selection
 
+Global rewrite mode is on by default.
+
 Use native Technitium features for:
 - block and allow lists
 - allowed zones
@@ -17,8 +19,8 @@ Use native Technitium features for:
 
 1. Install `RemoteRewriteApp.zip` in Technitium
 2. Configure `dnsApp.config`
-3. Add `APP` records where rewrite handling should apply
-4. Point the app at a remote `dns.txt`, `rewrite.json`, or inline rules
+3. Point the app at a remote `dns.txt`, `rewrite.json`, or inline rules
+4. Add `APP` records only if you want optional scoped overrides
 
 ## Docs
 

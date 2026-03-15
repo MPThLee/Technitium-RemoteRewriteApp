@@ -7,6 +7,7 @@ It supports:
 - remote `rewrite.json` manifests
 - inline rewrite text in app config
 - inline rewrite text in APP records
+- global rewrite matching by default
 - suffix, glob, and regex matching
 - Split Horizon-aware rewrite selection
 
@@ -20,6 +21,7 @@ It does not replace native Technitium features for:
 - migrate AdGuard Home `$dnsrewrite=` behavior to Technitium
 - keep rewrite rules in a remote file that Technitium fetches
 - keep a few rewrite rules inline in Technitium
+- apply rewrites globally without creating per-domain zones
 - return different rewrite answers for public, private, or custom Split Horizon groups
 
 ## Inputs

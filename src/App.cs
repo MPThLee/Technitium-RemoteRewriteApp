@@ -12,7 +12,7 @@ using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
 namespace RemoteRewrite;
 
-public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsApplicationPreference
+public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAuthoritativeRequestHandler, IDnsApplicationPreference
 {
     static readonly HttpClient _http = new HttpClient
     {
@@ -66,7 +66,7 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAppl
     DateTime _nextRefreshUtc = DateTime.MinValue;
     bool _disposed;
 
-    public string Description => "Fetches remote rewrite sources and serves suffix, glob, and regex DNS overrides. Supports AdGuard-style dns.txt filter sources, rewrite-rules.json manifests, and Split Horizon-compatible group scoping.";
+    public string Description => "Fetches remote rewrite sources and serves suffix, glob, and regex DNS overrides. Global rewrite mode is enabled by default, with optional APP-record scoped overrides and Split Horizon-compatible group scoping.";
 
     public string ApplicationRecordDataTemplate => _appRecordDataTemplate;
     public byte Preference => _config.AppPreference;
@@ -86,6 +86,14 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAppl
         await RefreshRulesAsync(force: true);
     }
 
+    public Task<DnsDatagram> ProcessRequestAsync(DnsDatagram request, IPEndPoint remoteEP, DnsTransportProtocol protocol, bool isRecursionAllowed)
+    {
+        if (_disposed || !_config.Enable || !_config.GlobalMode)
+            return Task.FromResult<DnsDatagram>(null);
+
+        return ProcessRequestCoreAsync(request, remoteEP, isRecursionAllowed, 0, AppRecordEffectiveOptions.GlobalDefault);
+    }
+
     public Task<DnsDatagram> ProcessRequestAsync(DnsDatagram request, IPEndPoint remoteEP, DnsTransportProtocol protocol, bool isRecursionAllowed, string zoneName, string appRecordName, uint appRecordTtl, string appRecordData)
     {
         if (_disposed || !_config.Enable)
@@ -98,8 +106,6 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAppl
         if (!appOptions.Enable)
             return Task.FromResult<DnsDatagram>(null);
 
-        TriggerRefreshIfNeeded();
-
         DnsQuestionRecord question = request.Question[0];
         string qname = question.Name.ToLowerInvariant();
 
@@ -108,19 +114,10 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAppl
 
         HashSet<string> resolvedGroups = _config.SplitHorizon.ResolveGroups(qname, remoteEP.Address);
         AppRecordEffectiveOptions effectiveOptions = appOptions.Resolve(resolvedGroups);
-        if (!effectiveOptions.Enable || !effectiveOptions.MatchesGroups(resolvedGroups))
+        if (!effectiveOptions.Enable)
             return Task.FromResult<DnsDatagram>(null);
 
-        RewriteRule rule = RuleMatcher.Match(effectiveOptions.InlineRules, qname, effectiveOptions.SourceNames, effectiveOptions.GroupNames, resolvedGroups)
-            ?? RuleMatcher.Match(_rules, qname, effectiveOptions.SourceNames, effectiveOptions.GroupNames, resolvedGroups);
-        if (rule is null)
-            return Task.FromResult<DnsDatagram>(null);
-
-        IReadOnlyList<DnsResourceRecord> answers = DnsResponseBuilder.BuildAnswers(question, appRecordTtl, effectiveOptions.OverrideTtl, _config.DefaultTtl, rule);
-        if (answers.Count == 0)
-            return Task.FromResult<DnsDatagram>(null);
-
-        return Task.FromResult(new DnsDatagram(request.Identifier, true, request.OPCODE, true, false, request.RecursionDesired, isRecursionAllowed, false, false, DnsResponseCode.NoError, request.Question, answers));
+        return ProcessRequestCoreAsync(request, remoteEP, isRecursionAllowed, appRecordTtl, effectiveOptions);
     }
 
     async Task RefreshRulesAsync(bool force)
@@ -226,5 +223,31 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAppl
 
         using StreamReader reader = new StreamReader(buffer);
         return await reader.ReadToEndAsync();
+    }
+
+    Task<DnsDatagram> ProcessRequestCoreAsync(DnsDatagram request, IPEndPoint remoteEP, bool isRecursionAllowed, uint appRecordTtl, AppRecordEffectiveOptions options)
+    {
+        if ((request?.Question is null) || (request.Question.Count == 0))
+            return Task.FromResult<DnsDatagram>(null);
+
+        TriggerRefreshIfNeeded();
+
+        DnsQuestionRecord question = request.Question[0];
+        string qname = question.Name.ToLowerInvariant();
+        HashSet<string> resolvedGroups = _config.SplitHorizon.ResolveGroups(qname, remoteEP.Address);
+
+        if (!options.MatchesGroups(resolvedGroups))
+            return Task.FromResult<DnsDatagram>(null);
+
+        RewriteRule rule = RuleMatcher.Match(options.InlineRules, qname, options.SourceNames, options.GroupNames, resolvedGroups)
+            ?? RuleMatcher.Match(_rules, qname, options.SourceNames, options.GroupNames, resolvedGroups);
+        if (rule is null)
+            return Task.FromResult<DnsDatagram>(null);
+
+        IReadOnlyList<DnsResourceRecord> answers = DnsResponseBuilder.BuildAnswers(question, appRecordTtl, options.OverrideTtl, _config.DefaultTtl, rule);
+        if (answers.Count == 0)
+            return Task.FromResult<DnsDatagram>(null);
+
+        return Task.FromResult(new DnsDatagram(request.Identifier, true, request.OPCODE, true, false, request.RecursionDesired, isRecursionAllowed, false, false, DnsResponseCode.NoError, request.Question, answers));
     }
 }

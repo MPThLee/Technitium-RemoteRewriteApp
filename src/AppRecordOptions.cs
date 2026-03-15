@@ -160,6 +160,14 @@ internal sealed class AppRecordOptions
 
 internal sealed class AppRecordEffectiveOptions
 {
+    public static readonly AppRecordEffectiveOptions GlobalDefault = new AppRecordEffectiveOptions(
+        true,
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+        null,
+        Array.Empty<RewriteRule>()
+    );
+
     public AppRecordEffectiveOptions(bool enable, HashSet<string> sourceNames, HashSet<string> groupNames, uint? overrideTtl, RewriteRule[] inlineRules)
     {
         Enable = enable;
