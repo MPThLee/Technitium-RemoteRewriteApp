@@ -26,6 +26,10 @@
       <HintPath>$(TechnitiumSdkDir)/TechnitiumLibrary.Net.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <Reference Include="DnsServerCore.ApplicationCommon">
+      <HintPath>$(TechnitiumSdkDir)/DnsServerCore.ApplicationCommon.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>
