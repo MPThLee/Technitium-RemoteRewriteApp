@@ -50,10 +50,16 @@ Example [dnsApp.config](dnsApp.config):
   "refreshSeconds": 300,
   "sources": [
     {
-      "name": "remote-rules",
+      "name": "remote-dns",
       "enable": true,
       "format": "adguard-filter",
       "url": "https://example.invalid/dns.txt"
+    },
+    {
+      "name": "remote-manifest",
+      "enable": false,
+      "format": "rewrite-rules-json",
+      "url": "https://example.invalid/rewrite.json"
     }
   ]
 }
