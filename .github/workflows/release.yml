@@ -13,6 +13,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -28,8 +30,14 @@ jobs:
       - name: Package app
         run: sh scripts/package-app.sh
 
+      - name: Build changelog
+        run: sh scripts/update-changelog.sh
+
+      - name: Extract release notes
+        run: sh scripts/extract-release-notes.sh "${GITHUB_REF_NAME}" CHANGELOG.md > RELEASE_NOTES.md
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/RemoteRewriteApp.zip
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md

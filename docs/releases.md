@@ -6,6 +6,13 @@ Pushes to `master` run:
 - build
 - tests
 - smoke verification
+- changelog update
+
+## Changelog
+
+`CHANGELOG.md` is maintained automatically from Git history.
+
+The repo updates it on `master` after normal pushes.
 
 ## Release publishing
 
@@ -17,7 +24,7 @@ The workflow:
 - packages the app
 - creates a GitHub Release
 - attaches `dist/RemoteRewriteApp.zip`
-- generates release notes automatically
+- uses the matching section from `CHANGELOG.md` as the release body
 
 ## Versioning
 

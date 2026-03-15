@@ -33,3 +33,4 @@ Use native Technitium features for:
 
 - CI runs on push to `master`
 - GitHub Release is published automatically on `v*` tags
+- `CHANGELOG.md` is updated automatically from Git history
