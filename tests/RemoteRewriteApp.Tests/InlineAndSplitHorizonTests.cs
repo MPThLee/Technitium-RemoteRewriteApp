@@ -114,6 +114,28 @@ public sealed class InlineAndSplitHorizonTests
     }
 
     [Fact]
+    public void AppRecordOptions_InlineSourcesSupportMultipleLines()
+    {
+        AppRecordOptions options = AppRecordOptions.Parse("""
+{
+  "enable": true,
+  "inlineSources": [
+    {
+      "name": "multi-inline",
+      "enable": true,
+      "format": "adguard-filter",
+      "text": "||one.example^$dnsrewrite=192.0.2.10\n||two.example^$dnsrewrite=192.0.2.20"
+    }
+  ]
+}
+""");
+
+        Assert.Equal(2, options.InlineRules.Length);
+        Assert.Contains(options.InlineRules, rule => rule.Pattern == "one.example" && rule.Answers.Single().Value == "192.0.2.10");
+        Assert.Contains(options.InlineRules, rule => rule.Pattern == "two.example" && rule.Answers.Single().Value == "192.0.2.20");
+    }
+
+    [Fact]
     public async Task ProcessRequestAsync_UsesSplitHorizonScopedInlineRules()
     {
         App app = new App();

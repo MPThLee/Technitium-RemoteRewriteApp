@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Prepare Technitium SDK refs
+        run: sh scripts/prepare-sdk.sh 14.3.0
+
+      - name: Run tests
+        run: sh scripts/test.sh
+
+      - name: Package app
+        run: sh scripts/package-app.sh
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/RemoteRewriteApp.zip
+          generate_release_notes: true

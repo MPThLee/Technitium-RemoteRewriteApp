@@ -2,12 +2,7 @@
 
 Technitium DNS App for remote-managed DNS rewrite rules.
 
-Current release focus:
-- drop-in support for remote AdGuard-style `dns.txt` rewrite rules
-- live Technitium install/config/query/uninstall verification
-- cached request-path benchmarking for future regressions
-
-It is meant for the part Technitium does not handle natively:
+This app is for the part Technitium does not handle natively:
 - AdGuard-style `$dnsrewrite=` rules
 - hostname globs like `*.example` or `edge*.example`
 - regex rewrites like `/node\\d+\\.example/$dnsrewrite=...`
@@ -17,27 +12,26 @@ Use native Technitium features for:
 - allowed zones
 - conditional forwarders
 
-Do not use this app for:
-- normal blocklist filtering
-- allowlist exceptions
-- forwarding a domain to another upstream DNS server
-
 ## Features
 
 - fetches remote rewrite sources on a timer
 - accepts multiple sources
 - supports inline source text in app config and APP record config
+- supports direct AdGuard-style `dns.txt` input
+- supports generated `rewrite-rules.json` input
 - supports:
   - `suffix`
   - `glob`
   - `regex`
 - supports Split Horizon-compatible group scoping
+- can import installed `SplitHorizonApp` group maps
+- can apply rewrites as:
+  - whole APP record behavior
+  - per Split Horizon group behavior
 - answers:
   - `A`
   - `AAAA`
   - `CNAME`
-- supports direct AdGuard-style `dns.txt` input
-- supports generated `rewrite-rules.json` input
 
 ## Verified behavior
 
@@ -55,6 +49,19 @@ Live smoke coverage currently includes:
 - live glob rewrite resolution
 - live regex rewrite resolution
 - uninstall cleanup verification
+
+## When to use it
+
+Use this app when you want one of these:
+- reuse an existing AdGuard-style `dns.txt` that contains `$dnsrewrite=`
+- publish rewrite rules remotely and let Technitium fetch them
+- use inline rewrite rules directly in Technitium APP records
+- apply different rewrite behavior to public/private/custom Split Horizon groups
+
+Do not use this app for:
+- normal blocklist filtering
+- allowlist exceptions
+- forwarding a domain to another upstream DNS server
 
 ## Source formats
 
@@ -129,13 +136,13 @@ Each source:
 - `name`: source identifier used by APP record scoping
 - `enable`: source on/off
 - `format`: `adguard-filter` or `rewrite-rules-json`
-- `url`: remote source URL
+- `url`: remote source URL for fetched sources
 - `text`: inline source text for Web UI editing
 - `groupNames`: optional group filter for conditional rewrites
 
 ## Split Horizon integration
 
-Technitium apps do not expose a clean direct inter-app API for third-party apps.
+Technitium apps do not expose a clean direct runtime inter-app API for third-party apps.
 
 This app supports Split Horizon in two ways:
 - compatibility mode: define matching `domainGroupMap` and `networkGroupMap` locally
@@ -197,6 +204,13 @@ Fields:
 - `inlineSources`: inline rules edited directly in the APP record JSON
 - `splitHorizonMap`: per-group APP record override, with whole-record fields acting as the fallback
 
+Inline source text can contain multiple rules. Example:
+
+```text
+||one.example^$dnsrewrite=192.0.2.10
+||two.example^$dnsrewrite=192.0.2.20
+```
+
 ## Quick start
 
 1. Package the app:
@@ -224,6 +238,12 @@ sh scripts/package-app.sh
 - the app refreshes remote rules periodically
 - `Dispose()` clears in-memory state
 - the app only responds for the zone and APP record scope passed by Technitium
+
+## Releases
+
+- pushes to `master` run CI
+- `v*` tags publish a GitHub Release automatically
+- release notes are generated automatically from GitHub history
 
 ## Related input
 
