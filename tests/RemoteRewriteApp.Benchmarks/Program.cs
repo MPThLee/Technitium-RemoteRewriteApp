@@ -1,11 +1,15 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
+using System.Text.Json;
 using RemoteRewrite;
+using TechnitiumLibrary.Net.Dns;
 using TechnitiumLibrary.Net.Dns.ResourceRecords;
 
 const int RuleCount = 12000;
 const int MatchIterations = 25000;
 const int ParseIterations = 250;
+const int RequestIterations = 10000;
 
 HashSet<string> noGroups = new(StringComparer.OrdinalIgnoreCase);
 RewriteAnswer answer = new(DnsResourceRecordType.A, "192.0.2.10");
@@ -68,6 +72,60 @@ RunBenchmark(
         int order = 0;
         return RuleParser.ParseRewriteRulesJsonSource(manifestSource, rewriteManifest, ref order).Count();
     });
+
+await using BenchmarkHttpSource httpSource = await BenchmarkHttpSource.StartAsync("""
+||rewrite.example.com^$dnsrewrite=192.0.2.55
+||edge*.glob.example.com^$dnsrewrite=203.0.113.77
+/node[0-9]+\.regex\.example\.com/$dnsrewrite=198.51.100.88
+""", "text/plain");
+
+App app = new();
+await app.InitializeAsync(null!, JsonSerializer.Serialize(new
+{
+    enable = true,
+    defaultTtl = 300,
+    refreshSeconds = 3600,
+    sources = new[]
+    {
+        new
+        {
+            name = "bench-remote-dns",
+            enable = true,
+            format = "adguard-filter",
+            url = httpSource.Url
+        }
+    }
+}));
+
+DnsDatagram suffixRequest = CreateRequest("rewrite.example.com", DnsResourceRecordType.A);
+DnsDatagram globRequest = CreateRequest("edge-42.glob.example.com", DnsResourceRecordType.A);
+DnsDatagram regexRequest = CreateRequest("node123.regex.example.com", DnsResourceRecordType.A);
+IPEndPoint remoteEP = new(IPAddress.Parse("203.0.113.10"), 5300);
+const string EnabledRecordData = """
+{
+  "enable": true,
+  "sourceNames": [],
+  "groupNames": [],
+  "overrideTtl": null
+}
+""";
+
+RunBenchmark(
+    "request cached suffix",
+    RequestIterations,
+    () => ResolveRequest(app, suffixRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "192.0.2.55"));
+
+RunBenchmark(
+    "request cached glob",
+    RequestIterations,
+    () => ResolveRequest(app, globRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "203.0.113.77"));
+
+RunBenchmark(
+    "request cached regex",
+    RequestIterations,
+    () => ResolveRequest(app, regexRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "198.51.100.88"));
+
+app.Dispose();
 
 static void RunBenchmark(string name, int iterations, Func<int> action)
 {
@@ -164,4 +222,125 @@ static System.Text.Json.JsonElement ParseJsonElement(string json)
 {
     using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(json);
     return document.RootElement.Clone();
+}
+
+static int ResolveRequest(App app, DnsDatagram request, IPEndPoint remoteEP, string zoneName, string appRecordName, string appRecordData, string expectedValue)
+{
+    DnsDatagram? response = app.ProcessRequestAsync(
+        request,
+        remoteEP,
+        DnsTransportProtocol.Udp,
+        true,
+        zoneName,
+        appRecordName,
+        300,
+        appRecordData).GetAwaiter().GetResult();
+
+    if (response is null || response.Answer.Count != 1)
+        throw new InvalidOperationException("expected exactly one answer from cached request path");
+
+    DnsARecordData answer = response.Answer[0].RDATA as DnsARecordData
+        ?? throw new InvalidOperationException("expected A answer");
+
+    string actual = answer.Address.ToString();
+    if (!string.Equals(actual, expectedValue, StringComparison.Ordinal))
+        throw new InvalidOperationException($"expected {expectedValue} but got {actual}");
+
+    return actual.Length;
+}
+
+static DnsDatagram CreateRequest(string qname, DnsResourceRecordType type)
+{
+    return new DnsDatagram(
+        0x1234,
+        false,
+        DnsOpcode.StandardQuery,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false,
+        DnsResponseCode.NoError,
+        new[] { new DnsQuestionRecord(qname, type, DnsClass.IN) });
+}
+
+sealed class BenchmarkHttpSource : IAsyncDisposable
+{
+    readonly HttpListener _listener;
+    readonly CancellationTokenSource _cts;
+    readonly Task _backgroundTask;
+
+    BenchmarkHttpSource(HttpListener listener, CancellationTokenSource cts, Task backgroundTask, string url)
+    {
+        _listener = listener;
+        _cts = cts;
+        _backgroundTask = backgroundTask;
+        Url = url;
+    }
+
+    public string Url { get; }
+
+    public static async Task<BenchmarkHttpSource> StartAsync(string content, string contentType)
+    {
+        int port = GetFreePort();
+        string prefix = $"http://127.0.0.1:{port}/";
+        HttpListener listener = new();
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+
+        CancellationTokenSource cts = new();
+        Task backgroundTask = Task.Run(async () =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                HttpListenerContext context;
+                try
+                {
+                    context = await listener.GetContextAsync();
+                }
+                catch (HttpListenerException)
+                {
+                    break;
+                }
+                catch (ObjectDisposedException)
+                {
+                    break;
+                }
+
+                byte[] payload = System.Text.Encoding.UTF8.GetBytes(content);
+                context.Response.StatusCode = 200;
+                context.Response.ContentType = contentType;
+                context.Response.ContentLength64 = payload.Length;
+                await context.Response.OutputStream.WriteAsync(payload, 0, payload.Length);
+                context.Response.OutputStream.Close();
+            }
+        }, cts.Token);
+
+        await Task.Delay(50);
+        return new BenchmarkHttpSource(listener, cts, backgroundTask, prefix);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        _listener.Close();
+        try
+        {
+            await _backgroundTask;
+        }
+        catch
+        {
+        }
+        _cts.Dispose();
+    }
+
+    static int GetFreePort()
+    {
+        TcpListener listener = new(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
 }

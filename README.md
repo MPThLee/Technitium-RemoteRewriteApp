@@ -183,6 +183,7 @@ The benchmark harness is meant for future regression checks. It currently report
 - rule matching throughput for suffix, glob, regex, and miss paths
 - parser throughput for large AdGuard filter input
 - parser throughput for large rewrite manifest input
+- cached steady-state request throughput for suffix, glob, and regex rewrites through `ProcessRequestAsync`
 
 ## Install
 
