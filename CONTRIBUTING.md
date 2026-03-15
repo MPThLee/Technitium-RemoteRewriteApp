@@ -4,6 +4,8 @@
 
 This repo builds a standalone Technitium DNS App for remote-managed rewrite rules.
 
+Public usage docs live in `docs/`. Keep `README.md` short and high-signal.
+
 Keep these boundaries intact:
 - rewrite handling belongs here
 - block/allow list handling stays in native Technitium features
@@ -104,9 +106,6 @@ Relevant upstream source references:
 - `IDnsAppRecordRequestHandler`
 - `IDnsApplicationPreference`
 - `Apps/SplitHorizonApp`
-
-The repo-local reference clone used during development is:
-- `TechnitiumSoftware/DnsServer`
 
 ## Contribution rules
 

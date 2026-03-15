@@ -1,0 +1,12 @@
+title: Technitium-RemoteRewriteApp
+description: Remote rewrite engine for Technitium DNS Server
+theme: minima
+markdown: kramdown
+plugins:
+  - jekyll-feed
+header_pages:
+  - docs/index.md
+  - docs/install.md
+  - docs/configuration.md
+  - docs/split-horizon.md
+  - docs/releases.md
