@@ -210,69 +210,6 @@ sh scripts/package-app.sh
 4. Add `APP` records for the domains or wildcard scopes that should use rewrite handling.
 5. Keep normal blocklists and conditional forwarders in native Technitium features.
 
-## Build
-
-Prepare official Technitium DLLs:
-
-```bash
-sh scripts/prepare-sdk.sh 14.3.0
-```
-
-Package the app:
-
-```bash
-sh scripts/package-app.sh
-```
-
-Run tests:
-
-```bash
-sh scripts/test.sh
-```
-
-Run the full Technitium smoke test:
-
-```bash
-sh scripts/smoke-test.sh
-```
-
-Run the benchmark harness:
-
-```bash
-sh scripts/benchmark.sh
-```
-
-If a Docker client or shell dies mid-run and you want to force cleanup:
-
-```bash
-sh scripts/smoke-cleanup.sh
-```
-
-Output:
-- `dist/RemoteRewriteApp/`
-- `dist/RemoteRewriteApp.zip`
-
-The ZIP is built in the same flat-file style used by official Technitium app archives.
-
-The smoke test does a real install/load cycle against a live `technitium/dns-server` container:
-- packages `RemoteRewriteApp.zip`
-- installs it through Technitium's HTTP API
-- applies app config with remote `dns.txt` and `rewrite.json` sources
-- creates `APP` records in a primary zone
-- resolves suffix, glob, and regex rewrites through Technitium's DNS client API
-- uninstalls the app and verifies cleanup
-
-The benchmark harness is meant for future regression checks. It currently reports:
-- rule matching throughput for suffix, glob, regex, and miss paths
-- parser throughput for large AdGuard filter input
-- parser throughput for large rewrite manifest input
-- cached steady-state request throughput for suffix, glob, and regex rewrites through `ProcessRequestAsync`
-
-This is the benchmark shape that matters operationally:
-- initialize once
-- fetch remote rules once
-- measure many repeated requests against the in-memory cached rule set
-
 ## Install
 
 1. Build `dist/RemoteRewriteApp.zip`
@@ -293,3 +230,7 @@ This is the benchmark shape that matters operationally:
 This app is designed to work with any remote source you control that publishes either:
 - an AdGuard-style `dns.txt`
 - a `rewrite-rules.json` manifest
+
+## Development
+
+Contributor workflow is documented in [CONTRIBUTING.md](CONTRIBUTING.md).
