@@ -147,11 +147,31 @@ Run tests:
 sh scripts/test.sh
 ```
 
+Run the full Technitium smoke test:
+
+```bash
+sh scripts/smoke-test.sh
+```
+
+If a Docker client or shell dies mid-run and you want to force cleanup:
+
+```bash
+sh scripts/smoke-cleanup.sh
+```
+
 Output:
 - `dist/RemoteRewriteApp/`
 - `dist/RemoteRewriteApp.zip`
 
 The ZIP is built in the same flat-file style used by official Technitium app archives.
+
+The smoke test does a real install/load cycle against a live `technitium/dns-server` container:
+- packages `RemoteRewriteApp.zip`
+- installs it through Technitium's HTTP API
+- applies app config with remote `dns.txt` and `rewrite.json` sources
+- creates `APP` records in a primary zone
+- resolves through Technitium's DNS client API
+- uninstalls the app and verifies cleanup
 
 ## Install
 

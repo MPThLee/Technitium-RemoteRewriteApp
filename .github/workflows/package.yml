@@ -22,8 +22,8 @@ jobs:
       - name: Run tests
         run: sh scripts/test.sh
 
-      - name: Package app
-        run: sh scripts/package-app.sh
+      - name: Run smoke test
+        run: sh scripts/smoke-test.sh
 
       - name: Upload package
         uses: actions/upload-artifact@v4
