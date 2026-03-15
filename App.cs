@@ -1,6 +1,7 @@
 using DnsServerCore.ApplicationCommon;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -16,7 +17,12 @@ namespace RemoteRewrite
 {
     public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler
     {
-        static readonly HttpClient _http = new HttpClient();
+        static readonly HttpClient _http = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+        const int MaxSourceBytes = 4 * 1024 * 1024;
+        const int MinimumRetrySeconds = 30;
 
         readonly SemaphoreSlim _refreshLock = new SemaphoreSlim(1, 1);
         readonly string _appRecordDataTemplate = """
@@ -47,36 +53,39 @@ namespace RemoteRewrite
             await RefreshRulesAsync(force: true);
         }
 
-        public async Task<DnsDatagram> ProcessRequestAsync(DnsDatagram request, IPEndPoint remoteEP, DnsTransportProtocol protocol, bool isRecursionAllowed, string zoneName, string appRecordName, uint appRecordTtl, string appRecordData)
+        public Task<DnsDatagram> ProcessRequestAsync(DnsDatagram request, IPEndPoint remoteEP, DnsTransportProtocol protocol, bool isRecursionAllowed, string zoneName, string appRecordName, uint appRecordTtl, string appRecordData)
         {
             if (_disposed || !_config.Enable)
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
+
+            if ((request?.Question is null) || (request.Question.Count == 0))
+                return Task.FromResult<DnsDatagram>(null);
 
             AppRecordOptions appOptions = AppRecordOptions.Parse(appRecordData);
             if (!appOptions.Enable)
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
 
-            await RefreshRulesAsync(force: false);
+            TriggerRefreshIfNeeded();
 
             DnsQuestionRecord question = request.Question[0];
             string qname = question.Name.ToLowerInvariant();
 
             if (!DnsScope.IsInZone(qname, zoneName) || !DnsScope.MatchesAppRecordScope(qname, appRecordName))
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
 
             HashSet<string> resolvedGroups = _config.SplitHorizon.ResolveGroups(qname, remoteEP.Address);
             if (!appOptions.MatchesGroups(resolvedGroups))
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
 
             RewriteRule rule = RuleMatcher.Match(_rules, qname, appOptions.SourceNames, appOptions.GroupNames, resolvedGroups);
             if (rule is null)
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
 
             IReadOnlyList<DnsResourceRecord> answers = DnsResponseBuilder.BuildAnswers(question, appRecordTtl, appOptions.OverrideTtl, _config.DefaultTtl, rule);
             if (answers.Count == 0)
-                return null;
+                return Task.FromResult<DnsDatagram>(null);
 
-            return new DnsDatagram(request.Identifier, true, request.OPCODE, true, false, request.RecursionDesired, isRecursionAllowed, false, false, DnsResponseCode.NoError, request.Question, answers);
+            return Task.FromResult(new DnsDatagram(request.Identifier, true, request.OPCODE, true, false, request.RecursionDesired, isRecursionAllowed, false, false, DnsResponseCode.NoError, request.Question, answers));
         }
 
         public string Description
@@ -118,7 +127,7 @@ namespace RemoteRewrite
                     if (!source.Enable)
                         continue;
 
-                    string content = await _http.GetStringAsync(source.Url);
+                    string content = await DownloadSourceAsync(source.Url);
 
                     switch (source.Format)
                     {
@@ -137,10 +146,64 @@ namespace RemoteRewrite
                 _rules = rules.OrderBy(static rule => rule.Order).ToArray();
                 _nextRefreshUtc = DateTime.UtcNow.AddSeconds(_config.RefreshSeconds);
             }
+            catch
+            {
+                _nextRefreshUtc = DateTime.UtcNow.AddSeconds(Math.Max(MinimumRetrySeconds, _config.RefreshSeconds));
+
+                if ((_rules.Length == 0) || force)
+                    throw;
+            }
             finally
             {
                 _refreshLock.Release();
             }
+        }
+
+        void TriggerRefreshIfNeeded()
+        {
+            if (_disposed || !_config.Enable)
+                return;
+
+            if (DateTime.UtcNow < _nextRefreshUtc)
+                return;
+
+            _ = RefreshRulesAsync(force: false);
+        }
+
+        static async Task<string> DownloadSourceAsync(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri))
+                throw new InvalidOperationException("Source URL must be an absolute URL.");
+
+            if ((uri.Scheme != Uri.UriSchemeHttp) && (uri.Scheme != Uri.UriSchemeHttps))
+                throw new InvalidOperationException("Source URL must use http or https.");
+
+            using HttpResponseMessage response = await _http.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+
+            if (response.Content.Headers.ContentLength is long contentLength && contentLength > MaxSourceBytes)
+                throw new InvalidOperationException("Source exceeds maximum allowed size.");
+
+            await using Stream stream = await response.Content.ReadAsStreamAsync();
+            using MemoryStream buffer = new MemoryStream();
+            byte[] chunk = new byte[8192];
+
+            while (true)
+            {
+                int bytesRead = await stream.ReadAsync(chunk, 0, chunk.Length);
+                if (bytesRead == 0)
+                    break;
+
+                if (buffer.Length + bytesRead > MaxSourceBytes)
+                    throw new InvalidOperationException("Source exceeds maximum allowed size.");
+
+                buffer.Write(chunk, 0, bytesRead);
+            }
+
+            buffer.Position = 0;
+
+            using StreamReader reader = new StreamReader(buffer);
+            return await reader.ReadToEndAsync();
         }
     }
 
@@ -170,6 +233,11 @@ namespace RemoteRewrite
 
             return false;
         }
+    }
+
+    internal static class AppLimits
+    {
+        public static readonly TimeSpan RegexTimeout = TimeSpan.FromMilliseconds(100);
     }
 
     internal static class DnsResponseBuilder
@@ -318,7 +386,7 @@ namespace RemoteRewrite
         public static bool GlobMatch(string qname, string pattern)
         {
             string regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
-            return Regex.IsMatch(qname, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return Regex.IsMatch(qname, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, AppLimits.RegexTimeout);
         }
 
         static HashSet<string> ParseGroupNames(JsonElement item, string propertyName)
@@ -707,7 +775,7 @@ namespace RemoteRewrite
                 : new HashSet<string>(groupNames, StringComparer.OrdinalIgnoreCase);
 
             if (matchType == MatchType.Regex)
-                _regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
+                _regex = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant, AppLimits.RegexTimeout);
         }
 
         public string SourceName { get; }
@@ -729,7 +797,14 @@ namespace RemoteRewrite
                     return RuleParser.GlobMatch(qname, Pattern);
 
                 case MatchType.Regex:
-                    return _regex.IsMatch(qname);
+                    try
+                    {
+                        return _regex.IsMatch(qname);
+                    }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        return false;
+                    }
 
                 default:
                     return false;
