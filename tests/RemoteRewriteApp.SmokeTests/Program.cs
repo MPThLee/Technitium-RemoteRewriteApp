@@ -22,12 +22,15 @@ using HttpClient http = new()
 };
 
 string token = await LoginWithRetryAsync();
+Log($"Technitium base URL: {baseUri}");
 
 try
 {
+    Log("Installing app zip");
     await InstallAppAsync(token, appZipPath);
 
     string classPath = await GetAppRecordClassPathAsync(token);
+    Log($"Installed app. APP record class path: {classPath}");
 
     string config = """
 {
@@ -52,13 +55,17 @@ try
 """.Replace("__DNS_TXT_URL__", dnsTxtUrl, StringComparison.Ordinal)
    .Replace("__REWRITE_JSON_URL__", rewriteJsonUrl, StringComparison.Ordinal);
 
+    Log("Saving app config with remote dns.txt and rewrite.json sources");
     await SetAppConfigAsync(token, config);
     string savedConfig = await GetAppConfigAsync(token);
     AssertContains(savedConfig, dnsTxtUrl, "saved config");
     AssertContains(savedConfig, rewriteJsonUrl, "saved config");
+    Log("App config saved and verified");
 
+    Log($"Creating primary zone {ZoneName}");
     await CreatePrimaryZoneAsync(token, ZoneName);
 
+    Log("Adding APP record for suffix rewrite");
     await AddAppRecordAsync(
         token,
         ZoneName,
@@ -73,10 +80,11 @@ try
 }
 """);
 
+    Log("Adding APP record for glob rewrite");
     await AddAppRecordAsync(
         token,
         ZoneName,
-        "*.wild.example.com",
+        "*.glob.example.com",
         classPath,
         """
 {
@@ -87,6 +95,22 @@ try
 }
 """);
 
+    Log("Adding APP record for regex rewrite");
+    await AddAppRecordAsync(
+        token,
+        ZoneName,
+        "*.regex.example.com",
+        classPath,
+        """
+{
+  "enable": true,
+  "sourceNames": ["remote-dns"],
+  "groupNames": [],
+  "overrideTtl": null
+}
+""");
+
+    Log("Adding APP record for manifest suffix rewrite");
     await AddAppRecordAsync(
         token,
         ZoneName,
@@ -101,17 +125,24 @@ try
 }
 """);
 
+    Log("Resolving suffix rewrite through Technitium");
     await WaitForResolveAsync(token, "rewrite.example.com", "192.0.2.55");
-    await WaitForResolveAsync(token, "node.wild.example.com", "203.0.113.77");
+    Log("Resolving glob rewrite through Technitium");
+    await WaitForResolveAsync(token, "edge-42.glob.example.com", "203.0.113.77");
+    Log("Resolving regex rewrite through Technitium");
+    await WaitForResolveAsync(token, "node123.regex.example.com", "198.51.100.88");
+    Log("Resolving manifest suffix rewrite through Technitium");
     await WaitForResolveAsync(token, "manifest.example.com", "198.51.100.42");
 }
 finally
 {
+    Log("Uninstalling app");
     await UninstallIfPresentAsync(token);
 }
 
 await EnsureAppRemovedAsync(token);
 
+Log("Verified app uninstall cleanup");
 Console.WriteLine("Smoke test passed.");
 
 async Task<string> LoginWithRetryAsync()
@@ -122,6 +153,7 @@ async Task<string> LoginWithRetryAsync()
     {
         try
         {
+            Log($"Login attempt {attempt}");
             using FormUrlEncodedContent form = new(new Dictionary<string, string>
             {
                 ["user"] = "admin",
@@ -142,11 +174,14 @@ async Task<string> LoginWithRetryAsync()
                 throw new InvalidOperationException("login response did not contain token");
             }
 
-            return tokenElement.GetString() ?? throw new InvalidOperationException("login response token was empty");
+            string tokenValue = tokenElement.GetString() ?? throw new InvalidOperationException("login response token was empty");
+            Log("Login succeeded");
+            return tokenValue;
         }
         catch (Exception ex)
         {
             lastError = ex;
+            Log($"Login attempt {attempt} failed: {ex.Message}");
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
     }
@@ -202,6 +237,7 @@ async Task SetAppConfigAsync(string tokenValue, string configValue)
     {
         try
         {
+            Log($"App config save attempt {attempt}");
             using FormUrlEncodedContent form = new(new Dictionary<string, string>
             {
                 ["config"] = configValue
@@ -213,11 +249,13 @@ async Task SetAppConfigAsync(string tokenValue, string configValue)
 
             using JsonDocument document = JsonDocument.Parse(body);
             EnsureOk(document.RootElement, "app config set");
+            Log("App config reloaded successfully");
             return;
         }
         catch (Exception ex)
         {
             lastError = ex;
+            Log($"App config save attempt {attempt} failed: {ex.Message}");
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
     }
@@ -270,6 +308,7 @@ async Task WaitForResolveAsync(string tokenValue, string domainName, string expe
     {
         try
         {
+            Log($"Resolve attempt {attempt} for {domainName}");
             string query =
                 $"api/dnsClient/resolve?token={Uri.EscapeDataString(tokenValue)}" +
                 "&server=this-server" +
@@ -283,11 +322,13 @@ async Task WaitForResolveAsync(string tokenValue, string domainName, string expe
             using JsonDocument document = await GetJsonAsync(query, $"resolve {domainName}");
             string payload = document.RootElement.GetProperty("response").GetProperty("result").GetRawText();
             AssertContains(payload, expectedValue, $"dns resolve result for {domainName}");
+            Log($"Resolve succeeded for {domainName}: {expectedValue}");
             return;
         }
         catch (Exception ex)
         {
             lastError = ex;
+            Log($"Resolve attempt {attempt} for {domainName} failed: {ex.Message}");
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
     }
@@ -365,4 +406,9 @@ static void AssertContains(string content, string expected, string label)
     {
         throw new InvalidOperationException($"{label} did not contain expected value '{expected}'. Actual content: {content}");
     }
+}
+
+static void Log(string message)
+{
+    Console.WriteLine("[smoke {0}] {1}", DateTimeOffset.UtcNow.ToString("u"), message);
 }

@@ -153,6 +153,12 @@ Run the full Technitium smoke test:
 sh scripts/smoke-test.sh
 ```
 
+Run the benchmark harness:
+
+```bash
+sh scripts/benchmark.sh
+```
+
 If a Docker client or shell dies mid-run and you want to force cleanup:
 
 ```bash
@@ -170,8 +176,13 @@ The smoke test does a real install/load cycle against a live `technitium/dns-ser
 - installs it through Technitium's HTTP API
 - applies app config with remote `dns.txt` and `rewrite.json` sources
 - creates `APP` records in a primary zone
-- resolves through Technitium's DNS client API
+- resolves suffix, glob, and regex rewrites through Technitium's DNS client API
 - uninstalls the app and verifies cleanup
+
+The benchmark harness is meant for future regression checks. It currently reports:
+- rule matching throughput for suffix, glob, regex, and miss paths
+- parser throughput for large AdGuard filter input
+- parser throughput for large rewrite manifest input
 
 ## Install
 

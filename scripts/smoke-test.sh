@@ -27,7 +27,8 @@ mkdir -p "$TMP_DIR"
 
 cat >"$TMP_DIR/dns.txt" <<'EOF'
 ||rewrite.example.com^$dnsrewrite=192.0.2.55
-||node.wild.example.com^$dnsrewrite=203.0.113.77
+||edge*.glob.example.com^$dnsrewrite=203.0.113.77
+/node[0-9]+\.regex\.example\.com/$dnsrewrite=198.51.100.88
 EOF
 
 cat >"$TMP_DIR/rewrite.json" <<'EOF'
@@ -96,8 +97,10 @@ docker rm -f "$TECHNITIUM_CONTAINER" >/dev/null 2>&1 || true
 docker rm -f "$SOURCE_CONTAINER" >/dev/null 2>&1 || true
 docker network rm "$NETWORK_NAME" >/dev/null 2>&1 || true
 
+printf '%s\n' "[smoke] creating docker network $NETWORK_NAME"
 docker network create "$NETWORK_NAME" >/dev/null
 
+printf '%s\n' "[smoke] starting remote source container $SOURCE_CONTAINER"
 docker run -d --rm \
   --name "$SOURCE_CONTAINER" \
   --network "$NETWORK_NAME" \
@@ -107,6 +110,7 @@ docker run -d --rm \
   "$SOURCE_IMAGE" \
   sh -c "httpd -f -p 80 -h /www" >/dev/null
 
+printf '%s\n' "[smoke] starting Technitium container $TECHNITIUM_CONTAINER"
 docker run -d --rm \
   --name "$TECHNITIUM_CONTAINER" \
   --network "$NETWORK_NAME" \
@@ -114,4 +118,5 @@ docker run -d --rm \
   -p "127.0.0.1:${HTTP_PORT}:5380" \
   "$TECHNITIUM_IMAGE" >/dev/null
 
+printf '%s\n' "[smoke] running live Technitium install/config/query/uninstall test"
 run_smoke_runner
