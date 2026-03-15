@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <Version>1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Company>example-user</Company>
+    <Product>Technitium DNS Server</Product>
+    <Authors>example-user</Authors>
+    <AssemblyName>RemoteRewriteApp</AssemblyName>
+    <RootNamespace>RemoteRewrite</RootNamespace>
+    <Description>Fetches remote rewrite-rules.json and serves suffix, glob, and regex DNS overrides through Technitium APP records.</Description>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <OutputType>Library</OutputType>
+    <TechnitiumSdkDir Condition="'$(TechnitiumSdkDir)' == ''">$(MSBuildThisFileDirectory)vendor/technitium</TechnitiumSdkDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="DnsServerCore.ApplicationCommon">
+      <HintPath>$(TechnitiumSdkDir)/DnsServerCore.ApplicationCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TechnitiumLibrary.Net">
+      <HintPath>$(TechnitiumSdkDir)/TechnitiumLibrary.Net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="dnsApp.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
