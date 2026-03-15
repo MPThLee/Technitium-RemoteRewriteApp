@@ -26,6 +26,7 @@ Do not use this app for:
 
 - fetches remote rewrite sources on a timer
 - accepts multiple sources
+- supports inline source text in app config and APP record config
 - supports:
   - `suffix`
   - `glob`
@@ -73,6 +74,7 @@ Example [dnsApp.config](dnsApp.config):
 
 ```json
 {
+  "appPreference": 100,
   "enable": true,
   "defaultTtl": 300,
   "refreshSeconds": 300,
@@ -81,6 +83,8 @@ Example [dnsApp.config](dnsApp.config):
     "defaultGroupName": "default",
     "privateGroupName": "private",
     "publicGroupName": "public",
+    "importInstalledApp": true,
+    "configFile": null,
     "domainGroupMap": {
       "internal.example": "private"
     },
@@ -102,6 +106,12 @@ Example [dnsApp.config](dnsApp.config):
       "format": "rewrite-rules-json",
       "url": "https://example.invalid/rewrite.json",
       "groupNames": ["private"]
+    },
+    {
+      "name": "inline-overrides",
+      "enable": false,
+      "format": "adguard-filter",
+      "text": "||service.example^$dnsrewrite=192.0.2.10"
     }
   ]
 }
@@ -109,6 +119,7 @@ Example [dnsApp.config](dnsApp.config):
 
 Fields:
 - `enable`: global app on/off
+- `appPreference`: Technitium app ordering preference
 - `defaultTtl`: fallback TTL
 - `refreshSeconds`: remote refresh interval
 - `splitHorizon`: optional Split Horizon-compatible group resolution
@@ -119,21 +130,22 @@ Each source:
 - `enable`: source on/off
 - `format`: `adguard-filter` or `rewrite-rules-json`
 - `url`: remote source URL
+- `text`: inline source text for Web UI editing
 - `groupNames`: optional group filter for conditional rewrites
 
 ## Split Horizon integration
 
-Technitium apps do not expose a direct inter-app API, so this app does not call the official Split Horizon app at runtime.
+Technitium apps do not expose a clean direct inter-app API for third-party apps.
 
-The correct integration model is compatibility:
-- use the same group names
-- use similar `domainGroupMap` and `networkGroupMap` conditions
-- scope rewrite sources or APP records with `groupNames`
+This app supports Split Horizon in two ways:
+- compatibility mode: define matching `domainGroupMap` and `networkGroupMap` locally
+- import mode: load the installed `SplitHorizonApp` `dnsApp.config` and reuse its group maps
 
 That gives you conditional rewrites such as:
 - public clients use `dns.txt`
 - private clients use `rewrite.json`
 - specific networks use an extra edge-only rewrite source
+- a single APP record can override rules per Split Horizon group or use a whole-record fallback
 
 ## APP record data
 
@@ -144,7 +156,36 @@ Technitium APP record template:
   "enable": true,
   "sourceNames": [],
   "groupNames": [],
-  "overrideTtl": null
+  "overrideTtl": null,
+  "inlineSources": [
+    {
+      "name": "record-inline",
+      "enable": false,
+      "format": "adguard-filter",
+      "text": "||service.example^$dnsrewrite=192.0.2.10"
+    }
+  ],
+  "splitHorizonMap": {
+    "private": {
+      "sourceNames": [],
+      "groupNames": [],
+      "overrideTtl": null,
+      "inlineSources": [
+        {
+          "name": "private-inline",
+          "enable": false,
+          "format": "adguard-filter",
+          "text": "||service.example^$dnsrewrite=10.0.0.10"
+        }
+      ]
+    },
+    "public": {
+      "sourceNames": [],
+      "groupNames": [],
+      "overrideTtl": null,
+      "inlineSources": []
+    }
+  }
 }
 ```
 
@@ -153,6 +194,8 @@ Fields:
 - `sourceNames`: optional source filter
 - `groupNames`: optional group filter
 - `overrideTtl`: optional per-record TTL
+- `inlineSources`: inline rules edited directly in the APP record JSON
+- `splitHorizonMap`: per-group APP record override, with whole-record fields acting as the fallback
 
 ## Quick start
 
