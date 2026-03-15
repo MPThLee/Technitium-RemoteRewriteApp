@@ -20,6 +20,7 @@ Use native Technitium features for:
   - `suffix`
   - `glob`
   - `regex`
+- supports Split Horizon-compatible group scoping
 - answers:
   - `A`
   - `AAAA`
@@ -48,6 +49,19 @@ Example [dnsApp.config](dnsApp.config):
   "enable": true,
   "defaultTtl": 300,
   "refreshSeconds": 300,
+  "splitHorizon": {
+    "enable": false,
+    "defaultGroupName": "default",
+    "privateGroupName": "private",
+    "publicGroupName": "public",
+    "domainGroupMap": {
+      "internal.example": "private"
+    },
+    "networkGroupMap": {
+      "10.0.0.0/8": "private",
+      "198.51.100.0/24": "edge"
+    }
+  },
   "sources": [
     {
       "name": "remote-dns",
@@ -59,7 +73,8 @@ Example [dnsApp.config](dnsApp.config):
       "name": "remote-manifest",
       "enable": false,
       "format": "rewrite-rules-json",
-      "url": "https://example.invalid/rewrite.json"
+      "url": "https://example.invalid/rewrite.json",
+      "groupNames": ["private"]
     }
   ]
 }
@@ -69,6 +84,7 @@ Fields:
 - `enable`: global app on/off
 - `defaultTtl`: fallback TTL
 - `refreshSeconds`: remote refresh interval
+- `splitHorizon`: optional Split Horizon-compatible group resolution
 - `sources`: array of remote sources
 
 Each source:
@@ -76,6 +92,21 @@ Each source:
 - `enable`: source on/off
 - `format`: `adguard-filter` or `rewrite-rules-json`
 - `url`: remote source URL
+- `groupNames`: optional group filter for conditional rewrites
+
+## Split Horizon integration
+
+Technitium apps do not expose a direct inter-app API, so this app does not call the official Split Horizon app at runtime.
+
+The correct integration model is compatibility:
+- use the same group names
+- use similar `domainGroupMap` and `networkGroupMap` conditions
+- scope rewrite sources or APP records with `groupNames`
+
+That gives you conditional rewrites such as:
+- public clients use `dns.txt`
+- private clients use `rewrite.json`
+- specific networks use an extra edge-only rewrite source
 
 ## APP record data
 
@@ -85,6 +116,7 @@ Technitium APP record template:
 {
   "enable": true,
   "sourceNames": [],
+  "groupNames": [],
   "overrideTtl": null
 }
 ```
@@ -92,6 +124,7 @@ Technitium APP record template:
 Fields:
 - `enable`: per-record on/off
 - `sourceNames`: optional source filter
+- `groupNames`: optional group filter
 - `overrideTtl`: optional per-record TTL
 
 ## Build
@@ -106,6 +139,12 @@ Package the app:
 
 ```bash
 sh scripts/package-app.sh
+```
+
+Run tests:
+
+```bash
+sh scripts/test.sh
 ```
 
 Output:

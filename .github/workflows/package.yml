@@ -19,6 +19,9 @@ jobs:
       - name: Prepare Technitium SDK refs
         run: sh scripts/prepare-sdk.sh 14.3.0
 
+      - name: Run tests
+        run: sh scripts/test.sh
+
       - name: Package app
         run: sh scripts/package-app.sh
 
