@@ -6,9 +6,9 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <Version>1.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <Company>example-user</Company>
+    <Company>RemoteRewriteApp</Company>
     <Product>Technitium DNS Server</Product>
-    <Authors>example-user</Authors>
+    <Authors>RemoteRewriteApp contributors</Authors>
     <AssemblyName>RemoteRewriteApp</AssemblyName>
     <RootNamespace>RemoteRewrite</RootNamespace>
     <Description>Fetches remote rewrite-rules.json and serves suffix, glob, and regex DNS overrides through Technitium APP records.</Description>
