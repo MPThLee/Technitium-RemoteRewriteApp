@@ -2,6 +2,11 @@
 
 This file is maintained automatically from Git history.
 
+## v0.5.0 - 2026-03-16
+
+- Enable global rewrite mode by default
+- Update CHANGELOG.md [skip ci]
+
 ## v0.4.0 - 2026-03-16
 
 - Automate changelog-based releases
