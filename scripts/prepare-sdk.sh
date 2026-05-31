@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${1:-14.3.0}"
+VERSION="${1:-15.2.0}"
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 SDK_DIR="$ROOT_DIR/vendor/technitium"
 ARCHIVE_URL="https://download.technitium.com/dns/archive/$VERSION/DnsServerPortable.tar.gz"

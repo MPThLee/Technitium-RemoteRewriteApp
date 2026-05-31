@@ -7,8 +7,8 @@ OUTPUT_DIR="$ROOT_DIR/dist/RemoteRewriteApp"
 BUILD_DIR="$ROOT_DIR/bin/$CONFIGURATION"
 ZIP_PATH="$ROOT_DIR/dist/RemoteRewriteApp.zip"
 
-if [ -d "$BUILD_DIR/net9.0" ]; then
-  BUILD_DIR="$BUILD_DIR/net9.0"
+if [ -d "$BUILD_DIR/net10.0" ]; then
+  BUILD_DIR="$BUILD_DIR/net10.0"
 fi
 
 rm -rf "$OUTPUT_DIR"

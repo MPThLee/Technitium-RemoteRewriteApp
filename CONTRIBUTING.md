@@ -25,7 +25,7 @@ Keep these boundaries intact:
 
 ## Requirements
 
-- .NET 9 SDK
+- .NET 10 SDK
 - Docker-compatible runtime for smoke tests
 - official Technitium SDK DLLs prepared under `vendor/technitium`
 
@@ -34,7 +34,7 @@ On this repo, Colima works for the smoke flow.
 ## Prepare SDK references
 
 ```bash
-sh scripts/prepare-sdk.sh 14.3.0
+sh scripts/prepare-sdk.sh 15.2.0
 ```
 
 ## Build and package

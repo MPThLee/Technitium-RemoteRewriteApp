@@ -2,6 +2,8 @@
 
 Remote rewrite engine for Technitium DNS Server.
 
+Targets Technitium DNS Server 15.2 and .NET 10.
+
 It exists for rewrite cases that do not fit native Technitium features well:
 - AdGuard-style `$dnsrewrite=` rules
 - wildcard host rewrites
