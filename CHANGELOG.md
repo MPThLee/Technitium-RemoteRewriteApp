@@ -2,6 +2,17 @@
 
 This file is maintained automatically from Git history.
 
+## Unreleased
+
+- Update Remote Rewrite for Technitium 15.4
+- Update Technitium target to 15.2
+- Update CHANGELOG.md [skip ci]
+
+## v0.5.1 - 2026-03-16
+
+- Enable global rewrite mode by default
+- Update CHANGELOG.md [skip ci]
+
 ## v0.5.0 - 2026-03-16
 
 - Enable global rewrite mode by default
