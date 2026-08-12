@@ -324,7 +324,7 @@ public sealed class AppRequestTests
     }
 
     [Fact]
-    public async Task ProcessRequestAsync_ReturnsNullWhenQuestionTypeDoesNotMatchAnswerType()
+    public async Task ProcessRequestAsync_ReturnsAuthoritativeNoDataWhenQuestionTypeDoesNotMatchAnswerType()
     {
         await using TestHttpSource source = await TestHttpSource.StartAsync("""
 ||service.example^$dnsrewrite=192.0.2.10
@@ -358,7 +358,10 @@ public sealed class AppRequestTests
             120,
             """{"enable":true,"sourceNames":[],"groupNames":[],"overrideTtl":null}""");
 
-        Assert.Null(response);
+        Assert.NotNull(response);
+        Assert.True(response!.AuthoritativeAnswer);
+        Assert.Equal(DnsResponseCode.NoError, response.RCODE);
+        Assert.Empty(response.Answer);
 
         app.Dispose();
     }

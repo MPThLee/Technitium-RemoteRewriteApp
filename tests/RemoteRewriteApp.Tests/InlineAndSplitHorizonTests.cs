@@ -40,7 +40,7 @@ public sealed class InlineAndSplitHorizonTests
     {
         string rootDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         string remoteRewriteDir = Path.Combine(rootDir, "RemoteRewriteApp");
-        string splitHorizonDir = Path.Combine(rootDir, "SplitHorizonApp");
+        string splitHorizonDir = Path.Combine(rootDir, "Split Horizon");
         Directory.CreateDirectory(remoteRewriteDir);
         Directory.CreateDirectory(splitHorizonDir);
 
@@ -52,8 +52,13 @@ public sealed class InlineAndSplitHorizonTests
     "internal.example": "edge"
   },
   "networkGroupMap": {
-    "198.51.100.0/24": "edge"
-  }
+    "198.51.100.0/24": "edge",
+    "203.0.113.0/24": "disabled"
+  },
+  "groups": [
+    { "name": "edge", "enabled": true },
+    { "name": "disabled", "enabled": false }
+  ]
 }
 """);
 
@@ -68,6 +73,7 @@ public sealed class InlineAndSplitHorizonTests
 
             Assert.Contains(config.ResolveGroups("service.internal.example", IPAddress.Parse("203.0.113.10")), group => group == "edge");
             Assert.Contains(config.ResolveGroups("service.example", IPAddress.Parse("198.51.100.10")), group => group == "edge");
+            Assert.DoesNotContain(config.ResolveGroups("service.example", IPAddress.Parse("203.0.113.10")), group => group == "disabled");
         }
         finally
         {

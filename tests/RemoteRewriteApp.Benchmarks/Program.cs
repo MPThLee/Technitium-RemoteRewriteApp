@@ -9,7 +9,7 @@ using TechnitiumLibrary.Net.Dns.ResourceRecords;
 const int RuleCount = 12000;
 const int MatchIterations = 25000;
 const int ParseIterations = 250;
-const int RequestIterations = 10000;
+const int RequestIterations = 100000;
 
 HashSet<string> noGroups = new(StringComparer.OrdinalIgnoreCase);
 RewriteAnswer answer = new(DnsResourceRecordType.A, "192.0.2.10");
@@ -83,6 +83,7 @@ App app = new();
 await app.InitializeAsync(null!, JsonSerializer.Serialize(new
 {
     enable = true,
+    globalMode = true,
     defaultTtl = 300,
     refreshSeconds = 3600,
     sources = new[]
@@ -100,30 +101,34 @@ await app.InitializeAsync(null!, JsonSerializer.Serialize(new
 DnsDatagram suffixRequest = CreateRequest("rewrite.example.com", DnsResourceRecordType.A);
 DnsDatagram globRequest = CreateRequest("edge-42.glob.example.com", DnsResourceRecordType.A);
 DnsDatagram regexRequest = CreateRequest("node123.regex.example.com", DnsResourceRecordType.A);
+DnsDatagram missRequest = CreateRequest("miss.example.net", DnsResourceRecordType.A);
 IPEndPoint remoteEP = new(IPAddress.Parse("203.0.113.10"), 5300);
-const string EnabledRecordData = """
-{
-  "enable": true,
-  "sourceNames": [],
-  "groupNames": [],
-  "overrideTtl": null
-}
-""";
 
 RunBenchmark(
-    "request cached suffix",
+    "request in-memory suffix",
     RequestIterations,
-    () => ResolveRequest(app, suffixRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "192.0.2.55"));
+    () => ResolveRequest(app, suffixRequest, remoteEP, "192.0.2.55"));
 
 RunBenchmark(
-    "request cached glob",
+    "request in-memory glob",
     RequestIterations,
-    () => ResolveRequest(app, globRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "203.0.113.77"));
+    () => ResolveRequest(app, globRequest, remoteEP, "203.0.113.77"));
 
 RunBenchmark(
-    "request cached regex",
+    "request in-memory regex",
     RequestIterations,
-    () => ResolveRequest(app, regexRequest, remoteEP, "example.com", "*.example.com", EnabledRecordData, "198.51.100.88"));
+    () => ResolveRequest(app, regexRequest, remoteEP, "198.51.100.88"));
+
+RunParallelBenchmark(
+    "request concurrent mixed",
+    RequestIterations * 2,
+    index => (index % 4) switch
+    {
+        0 => ResolveRequest(app, suffixRequest, remoteEP, "192.0.2.55"),
+        1 => ResolveRequest(app, globRequest, remoteEP, "203.0.113.77"),
+        2 => ResolveRequest(app, regexRequest, remoteEP, "198.51.100.88"),
+        _ => ResolveMiss(app, missRequest, remoteEP)
+    });
 
 app.Dispose();
 
@@ -138,7 +143,7 @@ static void RunBenchmark(string name, int iterations, Func<int> action)
     GC.WaitForPendingFinalizers();
     GC.Collect();
 
-    int checksum = 0;
+    long checksum = 0;
     Stopwatch stopwatch = Stopwatch.StartNew();
 
     for (int i = 0; i < iterations; i++)
@@ -148,6 +153,29 @@ static void RunBenchmark(string name, int iterations, Func<int> action)
 
     stopwatch.Stop();
 
+    double operationsPerSecond = iterations / stopwatch.Elapsed.TotalSeconds;
+    double microsecondsPerOp = stopwatch.Elapsed.TotalMilliseconds * 1000d / iterations;
+
+    Console.WriteLine(
+        "{0,-26} {1,10} ops  {2,12:F2} ops/s  {3,10:F2} us/op  checksum={4}",
+        name,
+        iterations,
+        operationsPerSecond,
+        microsecondsPerOp,
+        checksum);
+}
+
+static void RunParallelBenchmark(string name, int iterations, Func<int, int> action)
+{
+    long checksum = 0;
+    Stopwatch stopwatch = Stopwatch.StartNew();
+
+    Parallel.For(0, iterations, index =>
+    {
+        Interlocked.Add(ref checksum, action(index));
+    });
+
+    stopwatch.Stop();
     double operationsPerSecond = iterations / stopwatch.Elapsed.TotalSeconds;
     double microsecondsPerOp = stopwatch.Elapsed.TotalMilliseconds * 1000d / iterations;
 
@@ -224,17 +252,13 @@ static System.Text.Json.JsonElement ParseJsonElement(string json)
     return document.RootElement.Clone();
 }
 
-static int ResolveRequest(App app, DnsDatagram request, IPEndPoint remoteEP, string zoneName, string appRecordName, string appRecordData, string expectedValue)
+static int ResolveRequest(App app, DnsDatagram request, IPEndPoint remoteEP, string expectedValue)
 {
     DnsDatagram? response = app.ProcessRequestAsync(
         request,
         remoteEP,
         DnsTransportProtocol.Udp,
-        true,
-        zoneName,
-        appRecordName,
-        300,
-        appRecordData).GetAwaiter().GetResult();
+        true).GetAwaiter().GetResult();
 
     if (response is null || response.Answer.Count != 1)
         throw new InvalidOperationException("expected exactly one answer from cached request path");
@@ -247,6 +271,15 @@ static int ResolveRequest(App app, DnsDatagram request, IPEndPoint remoteEP, str
         throw new InvalidOperationException($"expected {expectedValue} but got {actual}");
 
     return actual.Length;
+}
+
+static int ResolveMiss(App app, DnsDatagram request, IPEndPoint remoteEP)
+{
+    DnsDatagram? response = app.ProcessRequestAsync(request, remoteEP, DnsTransportProtocol.Udp, true).GetAwaiter().GetResult();
+    if (response is not null)
+        throw new InvalidOperationException("expected unmatched request to fall through");
+
+    return 1;
 }
 
 static DnsDatagram CreateRequest(string qname, DnsResourceRecordType type)

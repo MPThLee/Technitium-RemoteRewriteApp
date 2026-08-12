@@ -31,7 +31,15 @@ internal sealed class AppRecordOptions
         if (string.IsNullOrWhiteSpace(appRecordData))
             return Empty;
 
+        if (_cache.Count >= AppLimits.MaxAppRecordCacheEntries)
+            _cache.Clear();
+
         return _cache.GetOrAdd(appRecordData, static data => ParseCore(data));
+    }
+
+    public static void ClearCache()
+    {
+        _cache.Clear();
     }
 
     public AppRecordEffectiveOptions Resolve(HashSet<string> resolvedGroups)

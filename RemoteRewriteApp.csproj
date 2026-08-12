@@ -4,14 +4,14 @@
     <TargetFramework>net10.0</TargetFramework>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <Version>1.0</Version>
+    <Version>0.6.0</Version>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Company>RemoteRewriteApp</Company>
     <Product>Technitium DNS Server</Product>
     <Authors>RemoteRewriteApp contributors</Authors>
     <AssemblyName>RemoteRewriteApp</AssemblyName>
     <RootNamespace>RemoteRewrite</RootNamespace>
-    <Description>Fetches remote rewrite-rules.json and serves suffix, glob, and regex DNS overrides through Technitium APP records.</Description>
+    <Description>Globally serves exact, suffix, glob, and regex DNS rewrites from remote or inline AdGuard and JSON sources.</Description>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <OutputType>Library</OutputType>
     <TechnitiumSdkDir Condition="'$(TechnitiumSdkDir)' == ''">$(MSBuildThisFileDirectory)vendor/technitium</TechnitiumSdkDir>

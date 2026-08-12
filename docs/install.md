@@ -2,6 +2,8 @@
 
 ## Package
 
+The current compatibility target is pinned in `.technitium-version` and requires .NET 10.
+
 Build the app package:
 
 ```bash

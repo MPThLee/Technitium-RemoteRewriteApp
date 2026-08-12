@@ -34,8 +34,10 @@ On this repo, Colima works for the smoke flow.
 ## Prepare SDK references
 
 ```bash
-sh scripts/prepare-sdk.sh 15.2.0
+sh scripts/prepare-sdk.sh
 ```
+
+The version comes from `.technitium-version`; .NET SDK selection comes from `global.json`. Update those pins instead of duplicating versions in scripts or workflows.
 
 ## Build and package
 
@@ -73,12 +75,9 @@ The smoke test covers:
 - package build
 - app install through Technitium HTTP API
 - app config save/reload
-- primary zone creation
-- APP record creation
-- suffix rewrite resolution
-- glob rewrite resolution
-- regex rewrite resolution
-- manifest rewrite resolution
+- global no-zone suffix, glob, regex, and manifest resolution
+- authoritative NODATA and AdGuard exceptions
+- optional primary-zone APP record mode
 - uninstall cleanup verification
 
 ## Benchmark
@@ -90,7 +89,7 @@ sh scripts/benchmark.sh
 Current benchmark focus:
 - parser throughput
 - matcher throughput
-- cached steady-state request throughput through `ProcessRequestAsync`
+- steady-state global request throughput through `ProcessRequestAsync`
 
 The benchmark shape that matters here is:
 - initialize once

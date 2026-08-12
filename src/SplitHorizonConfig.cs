@@ -85,7 +85,9 @@ internal sealed class SplitHorizonConfig
             if (string.IsNullOrWhiteSpace(appRoot))
                 return;
 
-            configFile = Path.Combine(appRoot, "SplitHorizonApp", "dnsApp.config");
+            string officialPath = Path.Combine(appRoot, "Split Horizon", "dnsApp.config");
+            string legacyPath = Path.Combine(appRoot, "SplitHorizonApp", "dnsApp.config");
+            configFile = File.Exists(officialPath) ? officialPath : legacyPath;
         }
         else if (!Path.IsPathRooted(configFile))
         {
@@ -100,12 +102,13 @@ internal sealed class SplitHorizonConfig
 
         List<DomainGroupRule> domainRules = new List<DomainGroupRule>();
         List<NetworkGroupRule> networkRules = new List<NetworkGroupRule>();
+        HashSet<string> disabledGroups = ParseDisabledGroups(root);
 
         if (root.TryGetProperty("domainGroupMap", out JsonElement domainGroupMap) && (domainGroupMap.ValueKind == JsonValueKind.Object))
         {
             foreach (JsonProperty property in domainGroupMap.EnumerateObject())
             {
-                if (property.Value.ValueKind == JsonValueKind.String)
+                if (property.Value.ValueKind == JsonValueKind.String && !disabledGroups.Contains(property.Value.GetString()))
                     domainRules.Add(new DomainGroupRule(property.Name, property.Value.GetString()));
             }
         }
@@ -114,13 +117,13 @@ internal sealed class SplitHorizonConfig
         {
             foreach (JsonProperty property in networkGroupMap.EnumerateObject())
             {
-                if (property.Value.ValueKind == JsonValueKind.String)
+                if (property.Value.ValueKind == JsonValueKind.String && !disabledGroups.Contains(property.Value.GetString()))
                     networkRules.Add(NetworkGroupRule.Parse(property.Name, property.Value.GetString()));
             }
         }
 
-        DomainGroupRules = domainRules.Concat(DomainGroupRules).OrderByDescending(static item => item.Pattern.Length).ToArray();
-        NetworkGroupRules = networkRules.Concat(NetworkGroupRules).OrderByDescending(static item => item.PrefixLength).ToArray();
+        DomainGroupRules = DomainGroupRules.Concat(domainRules).OrderByDescending(static item => item.Pattern.Length).ToArray();
+        NetworkGroupRules = NetworkGroupRules.Concat(networkRules).OrderByDescending(static item => item.PrefixLength).ToArray();
     }
 
     public HashSet<string> ResolveGroups(string qname, IPAddress address)
@@ -132,16 +135,16 @@ internal sealed class SplitHorizonConfig
         AddGroup(groups, DefaultGroupName);
         AddGroup(groups, NetworkClassifier.IsPrivateOrSpecial(address) ? PrivateGroupName : PublicGroupName);
 
-        foreach (DomainGroupRule rule in DomainGroupRules)
+        DomainGroupRule domainRule = DomainGroupRules.FirstOrDefault(rule => rule.Matches(qname));
+        if (domainRule is not null)
         {
-            if (rule.Matches(qname))
-                AddGroup(groups, rule.GroupName);
+            AddGroup(groups, domainRule.GroupName);
         }
-
-        foreach (NetworkGroupRule rule in NetworkGroupRules)
+        else
         {
-            if (rule.Matches(address))
-                AddGroup(groups, rule.GroupName);
+            NetworkGroupRule networkRule = NetworkGroupRules.FirstOrDefault(rule => rule.Matches(address));
+            if (networkRule is not null)
+                AddGroup(groups, networkRule.GroupName);
         }
 
         return groups;
@@ -156,6 +159,28 @@ internal sealed class SplitHorizonConfig
     static string NormalizeGroupName(string value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToLowerInvariant();
+    }
+
+    static HashSet<string> ParseDisabledGroups(JsonElement root)
+    {
+        HashSet<string> disabled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!root.TryGetProperty("groups", out JsonElement groups) || groups.ValueKind != JsonValueKind.Array)
+            return disabled;
+
+        foreach (JsonElement group in groups.EnumerateArray())
+        {
+            if (group.ValueKind != JsonValueKind.Object)
+                continue;
+
+            bool enabled = !group.TryGetProperty("enabled", out JsonElement enabledElement) || enabledElement.GetBoolean();
+            if (enabled)
+                continue;
+
+            if (group.TryGetProperty("name", out JsonElement name) && name.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(name.GetString()))
+                disabled.Add(name.GetString().Trim());
+        }
+
+        return disabled;
     }
 }
 
@@ -199,6 +224,9 @@ internal sealed class DomainGroupRule
 {
     public DomainGroupRule(string pattern, string groupName)
     {
+        if (string.IsNullOrWhiteSpace(pattern) || string.IsNullOrWhiteSpace(groupName))
+            throw new FormatException("Split Horizon domain and group names cannot be empty.");
+
         Pattern = pattern.Trim().TrimStart('.').ToLowerInvariant();
         GroupName = groupName.Trim().ToLowerInvariant();
     }
@@ -227,12 +255,19 @@ internal sealed class NetworkGroupRule
 
     public static NetworkGroupRule Parse(string pattern, string groupName)
     {
+        if (string.IsNullOrWhiteSpace(groupName))
+            throw new FormatException("Split Horizon network group name cannot be empty.");
+
         string trimmed = pattern.Trim();
         if (trimmed.Contains('/'))
         {
             string[] parts = trimmed.Split('/', 2);
             IPAddress network = IPAddress.Parse(parts[0]);
             int prefixLength = int.Parse(parts[1]);
+            int maximumPrefixLength = network.AddressFamily == AddressFamily.InterNetwork ? 32 : 128;
+            if (prefixLength < 0 || prefixLength > maximumPrefixLength)
+                throw new FormatException($"Invalid prefix length {prefixLength} for network '{pattern}'.");
+
             return new NetworkGroupRule(network, prefixLength, groupName);
         }
 

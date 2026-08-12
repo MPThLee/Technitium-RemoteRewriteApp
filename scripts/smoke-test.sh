@@ -4,7 +4,8 @@ set -eu
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Release}"
 HTTP_PORT="${TECHNITIUM_HTTP_PORT:-15380}"
-TECHNITIUM_IMAGE="${TECHNITIUM_IMAGE:-technitium/dns-server:15.2.0}"
+TECHNITIUM_VERSION="${TECHNITIUM_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/.technitium-version")}"
+TECHNITIUM_IMAGE="${TECHNITIUM_IMAGE:-technitium/dns-server:$TECHNITIUM_VERSION}"
 SOURCE_IMAGE="${SOURCE_IMAGE:-busybox:latest}"
 SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
 NETWORK_NAME="${SMOKE_NETWORK_NAME:-remote-rewrite-app-smoke}"
@@ -13,6 +14,19 @@ SOURCE_CONTAINER="${SMOKE_SOURCE_CONTAINER:-remote-rewrite-app-source}"
 RESOURCE_LABEL="com.remoterewriteapp.smoke=true"
 TMP_DIR="$(mktemp -d "$ROOT_DIR/.smoke.XXXXXX")"
 SOURCE_BASE_URL="http://${SOURCE_CONTAINER}"
+
+# Preserve the active engine endpoint but avoid stale Docker Desktop credential
+# helpers when the user runs Colima or another Docker-compatible runtime.
+if [ -z "${DOCKER_HOST:-}" ]; then
+  ACTIVE_DOCKER_CONTEXT="$(docker context show)"
+  DOCKER_HOST="$(docker context inspect "$ACTIVE_DOCKER_CONTEXT" --format '{{.Endpoints.docker.Host}}')"
+  export DOCKER_HOST
+fi
+
+DOCKER_CONFIG="$TMP_DIR/docker-config"
+export DOCKER_CONFIG
+mkdir -p "$DOCKER_CONFIG"
+printf '%s\n' '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
 
 cleanup() {
   docker rm -f "$TECHNITIUM_CONTAINER" >/dev/null 2>&1 || true
@@ -29,6 +43,9 @@ cat >"$TMP_DIR/dns.txt" <<'EOF'
 ||rewrite.example.com^$dnsrewrite=192.0.2.55
 ||edge*.glob.example.com^$dnsrewrite=203.0.113.77
 /node[0-9]+\.regex\.example\.com/$dnsrewrite=198.51.100.88
+||nodata.example.com^$dnsrewrite=192.0.2.99
+||disabled.example.com^$dnsrewrite=192.0.2.100
+@@||disabled.example.com^$dnsrewrite
 EOF
 
 cat >"$TMP_DIR/rewrite.json" <<'EOF'

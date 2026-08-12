@@ -6,7 +6,7 @@ CONFIGURATION="${CONFIGURATION:-Release}"
 SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
 
 if command -v dotnet >/dev/null 2>&1; then
-  sh "$ROOT_DIR/scripts/prepare-sdk.sh" "${TECHNITIUM_SDK_VERSION:-15.2.0}"
+  sh "$ROOT_DIR/scripts/prepare-sdk.sh" "${TECHNITIUM_SDK_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/.technitium-version")}"
   dotnet run \
     --project "$ROOT_DIR/tests/RemoteRewriteApp.Benchmarks/RemoteRewriteApp.Benchmarks.csproj" \
     -c "$CONFIGURATION"
@@ -15,5 +15,5 @@ else
     -v "$ROOT_DIR:/work" \
     -w /work \
     "$SDK_IMAGE" \
-    sh -lc "sh scripts/prepare-sdk.sh ${TECHNITIUM_SDK_VERSION:-15.2.0} >/dev/null && dotnet run --project tests/RemoteRewriteApp.Benchmarks/RemoteRewriteApp.Benchmarks.csproj -c $CONFIGURATION"
+    sh -lc "sh scripts/prepare-sdk.sh ${TECHNITIUM_SDK_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/.technitium-version")} >/dev/null && dotnet run --project tests/RemoteRewriteApp.Benchmarks/RemoteRewriteApp.Benchmarks.csproj -c $CONFIGURATION"
 fi

@@ -35,6 +35,8 @@ try
     string config = """
 {
   "enable": true,
+  "globalMode": true,
+  "allowInsecureHttp": true,
   "defaultTtl": 300,
   "refreshSeconds": 60,
   "sources": [
@@ -62,10 +64,28 @@ try
     AssertContains(savedConfig, rewriteJsonUrl, "saved config");
     Log("App config saved and verified");
 
+    Log("Resolving global suffix rewrite without a zone or APP record");
+    await WaitForResolveAsync(token, "rewrite.example.com", "192.0.2.55");
+    Log("Resolving global glob rewrite without a zone or APP record");
+    await WaitForResolveAsync(token, "edge-42.glob.example.com", "203.0.113.77");
+    Log("Resolving global regex rewrite without a zone or APP record");
+    await WaitForResolveAsync(token, "node123.regex.example.com", "198.51.100.88");
+    Log("Resolving global manifest rewrite without a zone or APP record");
+    await WaitForResolveAsync(token, "manifest.example.com", "198.51.100.42");
+
+    Log("Verifying an A-only rewrite returns NODATA for AAAA instead of falling through");
+    await WaitForNoAnswerAsync(token, "nodata.example.com", "AAAA");
+
+    Log("Verifying an AdGuard exception disables its matching rewrite");
+    await WaitForValueAbsentAsync(token, "disabled.example.com", "A", "192.0.2.100");
+
+    Log("Switching to scoped APP-record mode");
+    string scopedConfig = config.Replace("\"globalMode\": true", "\"globalMode\": false", StringComparison.Ordinal);
+    await SetAppConfigAsync(token, scopedConfig);
+
     Log($"Creating primary zone {ZoneName}");
     await CreatePrimaryZoneAsync(token, ZoneName);
-
-    Log("Adding APP record for suffix rewrite");
+    Log("Adding a scoped APP record");
     await AddAppRecordAsync(
         token,
         ZoneName,
@@ -79,60 +99,7 @@ try
   "overrideTtl": 90
 }
 """);
-
-    Log("Adding APP record for glob rewrite");
-    await AddAppRecordAsync(
-        token,
-        ZoneName,
-        "*.glob.example.com",
-        classPath,
-        """
-{
-  "enable": true,
-  "sourceNames": ["remote-dns"],
-  "groupNames": [],
-  "overrideTtl": null
-}
-""");
-
-    Log("Adding APP record for regex rewrite");
-    await AddAppRecordAsync(
-        token,
-        ZoneName,
-        "*.regex.example.com",
-        classPath,
-        """
-{
-  "enable": true,
-  "sourceNames": ["remote-dns"],
-  "groupNames": [],
-  "overrideTtl": null
-}
-""");
-
-    Log("Adding APP record for manifest suffix rewrite");
-    await AddAppRecordAsync(
-        token,
-        ZoneName,
-        "manifest.example.com",
-        classPath,
-        """
-{
-  "enable": true,
-  "sourceNames": ["remote-manifest"],
-  "groupNames": [],
-  "overrideTtl": null
-}
-""");
-
-    Log("Resolving suffix rewrite through Technitium");
     await WaitForResolveAsync(token, "rewrite.example.com", "192.0.2.55");
-    Log("Resolving glob rewrite through Technitium");
-    await WaitForResolveAsync(token, "edge-42.glob.example.com", "203.0.113.77");
-    Log("Resolving regex rewrite through Technitium");
-    await WaitForResolveAsync(token, "node123.regex.example.com", "198.51.100.88");
-    Log("Resolving manifest suffix rewrite through Technitium");
-    await WaitForResolveAsync(token, "manifest.example.com", "198.51.100.42");
 }
 finally
 {
@@ -334,6 +301,96 @@ async Task WaitForResolveAsync(string tokenValue, string domainName, string expe
     }
 
     throw new InvalidOperationException($"failed to resolve expected value for {domainName}", lastError);
+}
+
+async Task WaitForNoAnswerAsync(string tokenValue, string domainName, string recordType)
+{
+    Exception? lastError = null;
+
+    for (int attempt = 1; attempt <= 30; attempt++)
+    {
+        try
+        {
+            Log($"NODATA attempt {attempt} for {domainName} {recordType}");
+            using JsonDocument document = await ResolveAsync(tokenValue, domainName, recordType);
+            JsonElement result = document.RootElement.GetProperty("response").GetProperty("result");
+            JsonElement answer = GetPropertyIgnoreCase(result, "answer");
+            JsonElement rcode = GetPropertyIgnoreCase(result, "rcode");
+            JsonElement authoritative = GetPropertyIgnoreCase(result, "authoritativeAnswer");
+
+            if (answer.ValueKind != JsonValueKind.Array || answer.GetArrayLength() != 0)
+                throw new InvalidOperationException("response was not NODATA: " + result.GetRawText());
+
+            if (!string.Equals(rcode.GetString(), "NoError", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("response code was not NOERROR: " + result.GetRawText());
+
+            if (authoritative.ValueKind != JsonValueKind.True)
+                throw new InvalidOperationException("NODATA response was not authoritative: " + result.GetRawText());
+
+            Log($"NODATA verified for {domainName} {recordType}");
+            return;
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    throw new InvalidOperationException($"failed to verify NODATA for {domainName}", lastError);
+}
+
+async Task WaitForValueAbsentAsync(string tokenValue, string domainName, string recordType, string forbiddenValue)
+{
+    Exception? lastError = null;
+
+    for (int attempt = 1; attempt <= 30; attempt++)
+    {
+        try
+        {
+            Log($"Exception-rule attempt {attempt} for {domainName}");
+            using JsonDocument document = await ResolveAsync(tokenValue, domainName, recordType);
+            string payload = document.RootElement.GetProperty("response").GetProperty("result").GetRawText();
+            if (payload.Contains(forbiddenValue, StringComparison.Ordinal))
+                throw new InvalidOperationException($"disabled rewrite value '{forbiddenValue}' was returned: {payload}");
+
+            Log($"Exception rule verified for {domainName}");
+            return;
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    throw new InvalidOperationException($"failed to verify exception rule for {domainName}", lastError);
+}
+
+Task<JsonDocument> ResolveAsync(string tokenValue, string domainName, string recordType)
+{
+    string query =
+        $"api/dnsClient/resolve?token={Uri.EscapeDataString(tokenValue)}" +
+        "&server=this-server" +
+        $"&domain={Uri.EscapeDataString(domainName)}" +
+        $"&type={Uri.EscapeDataString(recordType)}" +
+        "&protocol=UDP" +
+        "&dnssec=false" +
+        "&eDnsClientSubnet=" +
+        $"&node={Uri.EscapeDataString(NodeName)}";
+
+    return GetJsonAsync(query, $"resolve {domainName} {recordType}");
+}
+
+static JsonElement GetPropertyIgnoreCase(JsonElement value, string propertyName)
+{
+    foreach (JsonProperty property in value.EnumerateObject())
+    {
+        if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+            return property.Value;
+    }
+
+    throw new InvalidOperationException($"response did not contain '{propertyName}': {value.GetRawText()}");
 }
 
 async Task UninstallIfPresentAsync(string tokenValue)

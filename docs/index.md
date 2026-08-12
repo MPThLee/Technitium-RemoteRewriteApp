@@ -8,7 +8,8 @@ It supports:
 - inline rewrite text in app config
 - inline rewrite text in APP records
 - global rewrite matching by default
-- suffix, glob, and regex matching
+- exact, suffix, glob, and regex matching
+- AdGuard exceptions, multiple answers, full `RCODE;RRTYPE;VALUE` syntax, and NODATA behavior
 - Split Horizon-aware rewrite selection
 
 It does not replace native Technitium features for:
@@ -34,6 +35,8 @@ Answers supported:
 - `A`
 - `AAAA`
 - `CNAME`
+
+Matched rewrites run before Technitium's recursive cache. A miss falls through to the cache and then normal upstream resolution.
 
 ## Next
 

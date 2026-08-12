@@ -2,12 +2,12 @@
 
 Remote rewrite engine for Technitium DNS Server.
 
-Targets Technitium DNS Server 15.2 and .NET 10.
+Targets Technitium DNS Server 15.4 and .NET 10.
 
 It exists for rewrite cases that do not fit native Technitium features well:
-- AdGuard-style `$dnsrewrite=` rules
-- wildcard host rewrites
-- regex rewrites
+- AdGuard `$dnsrewrite` rules and exceptions
+- exact, suffix, wildcard/glob, and regex matches
+- A, AAAA, CNAME, NODATA, and response-code rewrites
 - Split Horizon-aware rewrite selection
 
 Global rewrite mode is on by default.
@@ -23,6 +23,8 @@ Use native Technitium features for:
 2. Configure `dnsApp.config`
 3. Point the app at a remote `dns.txt`, `rewrite.json`, or inline rules
 4. Add `APP` records only if you want optional scoped overrides
+
+HTTPS is required for remote sources by default. Trusted local HTTP sources require `allowInsecureHttp: true`.
 
 ## Docs
 

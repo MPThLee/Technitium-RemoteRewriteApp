@@ -14,10 +14,14 @@ This is independent from the official `SplitHorizonApp`, but compatible with the
 
 If the official `SplitHorizonApp` is installed, this app can import its group maps from `dnsApp.config`.
 
+Technitium 15.4 installs it as `Split Horizon`; discovery uses that folder automatically and retains the older `SplitHorizonApp` folder as a compatibility fallback.
+
 Relevant app config fields:
 - `splitHorizon.enable`
 - `splitHorizon.importInstalledApp`
 - `splitHorizon.configFile`
+
+The most-specific domain mapping wins. If no domain mapping matches, the most-specific client network mapping wins. Disabled groups from the official app are not imported. Explicit mappings in this app take precedence over imported mappings of equal specificity.
 
 ## APP record behavior
 
@@ -31,4 +35,3 @@ That allows patterns like:
 - `edge` uses a dedicated manifest source
 
 If no group-specific override matches, the whole-record config is used as fallback.
-
