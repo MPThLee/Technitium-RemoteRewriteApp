@@ -4,6 +4,8 @@ This file is maintained automatically from Git history.
 
 ## Unreleased
 
+- Harden and optimize Remote Rewrite 0.6.0
+- Update CHANGELOG.md [skip ci]
 - Update Remote Rewrite for Technitium 15.4
 - Update Technitium target to 15.2
 - Update CHANGELOG.md [skip ci]
