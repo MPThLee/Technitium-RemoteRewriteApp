@@ -37,6 +37,7 @@ try
   "enable": true,
   "globalMode": true,
   "allowInsecureHttp": true,
+  "allowPrivateNetworkSources": true,
   "defaultTtl": 300,
   "refreshSeconds": 60,
   "sources": [

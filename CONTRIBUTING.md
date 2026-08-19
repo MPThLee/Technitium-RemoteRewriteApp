@@ -37,7 +37,7 @@ On this repo, Colima works for the smoke flow.
 sh scripts/prepare-sdk.sh
 ```
 
-The version comes from `.technitium-version`; .NET SDK selection comes from `global.json`. Update those pins instead of duplicating versions in scripts or workflows.
+The version comes from `.technitium-version`, and its portable archive checksum comes from `scripts/technitium-sdk-sha256.txt`. Update and independently verify both pins together. .NET SDK selection comes from `global.json`; do not duplicate these values in scripts or workflows.
 
 ## Build and package
 

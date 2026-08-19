@@ -35,12 +35,28 @@ public sealed class AdGuardCompatibilityTests
         Assert.False(rule.AppliesTo(DnsResourceRecordType.A));
     }
 
+    [Theory]
+    [InlineData("||service.example^$dnsrewrite=192.0.2.10,dnstype=")]
+    [InlineData("||service.example^$dnsrewrite=192.0.2.10,dnstype=||")]
+    [InlineData("||service.example^$dnsrewrite=192.0.2.10,dnstype=A,dnstype=AAAA")]
+    public void ParserSkipsMalformedDnsTypeModifiersInsteadOfBroadeningThem(string rule)
+    {
+        Assert.Empty(Parse(rule));
+    }
+
     [Fact]
     public void ParserSkipsUnsupportedClientTargetingInsteadOfApplyingGlobally()
     {
         RewriteRule[] rules = Parse("||service.example^$dnsrewrite=192.0.2.10,client=192.0.2.20");
 
         Assert.Empty(rules);
+    }
+
+    [Fact]
+    public void ParserSkipsBadfilterAndUnknownModifiersInsteadOfApplyingGlobally()
+    {
+        Assert.Empty(Parse("||service.example^$dnsrewrite=192.0.2.10,badfilter"));
+        Assert.Empty(Parse("||service.example^$dnsrewrite=192.0.2.10,unknown-scope"));
     }
 
     [Fact]
@@ -53,6 +69,14 @@ public sealed class AdGuardCompatibilityTests
 
         RewriteRule rule = Assert.Single(rules);
         Assert.Equal("valid.example", rule.Pattern);
+    }
+
+    [Theory]
+    [InlineData("||service.example^$dnsrewrite=NOERROR;A;")]
+    [InlineData("||service.example^$dnsrewrite=NOERROR;;192.0.2.10")]
+    public void ParserSkipsHalfSpecifiedFullRewriteValues(string rule)
+    {
+        Assert.Empty(Parse(rule));
     }
 
     [Fact]
@@ -117,6 +141,18 @@ public sealed class AdGuardCompatibilityTests
     }
 
     [Fact]
+    public void ResponseBuilderCapsUniqueAnswers()
+    {
+        string rulesText = string.Join('\n', Enumerable.Range(1, AppLimits.MaxAnswersPerResponse + 10)
+            .Select(index => $"||service.example^$dnsrewrite=192.0.2.{index}"));
+        RewriteMatch match = Match(Parse(rulesText), "service.example", DnsResourceRecordType.A);
+
+        IReadOnlyList<DnsResourceRecord> answers = BuildAnswers(match, DnsResourceRecordType.A);
+
+        Assert.Equal(AppLimits.MaxAnswersPerResponse, answers.Count);
+    }
+
+    [Fact]
     public void CnameRewriteTakesPriorityOverAddressRewrites()
     {
         RewriteRule[] rules = Parse("""
@@ -177,6 +213,125 @@ public sealed class AdGuardCompatibilityTests
   ]
 }
 """));
+
+        Assert.Throws<FormatException>(() => AppConfig.Parse("""
+{
+  "allowInsecureHttp": true,
+  "sources": [
+    { "name": "loopback", "url": "http://127.0.0.1/dns.txt" }
+  ]
+}
+"""));
+
+        AppConfig trustedInternal = AppConfig.Parse("""
+{
+  "allowInsecureHttp": true,
+  "allowPrivateNetworkSources": true,
+  "sources": [
+    { "name": "loopback", "url": "http://127.0.0.1/dns.txt" }
+  ]
+}
+""");
+
+        Assert.True(trustedInternal.AllowInsecureHttp);
+        Assert.True(trustedInternal.AllowPrivateNetworkSources);
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0")]
+    [InlineData("10.0.0.1")]
+    [InlineData("100.64.0.1")]
+    [InlineData("127.0.0.1")]
+    [InlineData("169.254.1.1")]
+    [InlineData("172.16.0.1")]
+    [InlineData("192.0.0.170")]
+    [InlineData("192.0.0.171")]
+    [InlineData("192.168.0.1")]
+    [InlineData("224.0.0.1")]
+    [InlineData("255.255.255.255")]
+    [InlineData("::")]
+    [InlineData("::1")]
+    [InlineData("fc00::1")]
+    [InlineData("fe80::1")]
+    [InlineData("ff02::1")]
+    [InlineData("64:ff9b::7f00:1")]
+    [InlineData("64:ff9b:1::a9fe:a9fe")]
+    [InlineData("100::1")]
+    [InlineData("2001::1")]
+    [InlineData("2001:db8::1")]
+    [InlineData("2002:7f00:1::")]
+    [InlineData("3ffe::1")]
+    [InlineData("3fff::1")]
+    [InlineData("5f00::1")]
+    [InlineData("2606:4700:4700:0:0:5efe:7f00:1")]
+    public void SourceNetworkPolicy_BlocksPrivateAndSpecialUseAddresses(string value)
+    {
+        Assert.True(SourceNetworkPolicy.IsBlockedByDefault(IPAddress.Parse(value)));
+    }
+
+    [Theory]
+    [InlineData("1.1.1.1")]
+    [InlineData("8.8.8.8")]
+    [InlineData("192.0.0.9")]
+    [InlineData("192.0.0.10")]
+    [InlineData("192.31.196.1")]
+    [InlineData("192.31.195.255")]
+    [InlineData("192.31.197.0")]
+    [InlineData("192.52.193.1")]
+    [InlineData("192.52.192.255")]
+    [InlineData("192.52.194.0")]
+    [InlineData("192.175.48.1")]
+    [InlineData("192.175.47.255")]
+    [InlineData("192.175.49.0")]
+    [InlineData("2606:4700:4700::1111")]
+    public void SourceNetworkPolicy_AllowsPublicAddresses(string value)
+    {
+        Assert.False(SourceNetworkPolicy.IsBlockedByDefault(IPAddress.Parse(value)));
+    }
+
+    [Fact]
+    public void ConfigCapsNormalizedSourceGroupNames()
+    {
+        string[] tooManyGroups = Enumerable.Range(0, 65).Select(static index => $"group-{index}").ToArray();
+        string tooManyConfig = JsonSerializer.Serialize(new
+        {
+            sources = new[]
+            {
+                new
+                {
+                    name = "remote",
+                    url = "https://example.invalid/dns.txt",
+                    groupNames = tooManyGroups
+                }
+            }
+        });
+
+        Assert.Throws<FormatException>(() => AppConfig.Parse(tooManyConfig));
+        Assert.Throws<FormatException>(() => AppConfig.Parse(JsonSerializer.Serialize(new
+        {
+            sources = new[]
+            {
+                new
+                {
+                    name = "remote",
+                    url = "https://example.invalid/dns.txt",
+                    groupNames = new[] { new string('a', 129) }
+                }
+            }
+        })));
+
+        AppConfig normalized = AppConfig.Parse("""
+{
+  "sources": [{
+    "name": "remote",
+    "url": "https://example.invalid/dns.txt",
+    "groupNames": [" PRIVATE ", "private"]
+  }]
+}
+""");
+
+        Assert.Single(normalized.Sources[0].GroupNames);
+        Assert.Contains("private", normalized.Sources[0].GroupNames);
     }
 
     [Fact]
@@ -189,6 +344,36 @@ public sealed class AdGuardCompatibilityTests
   "networkGroupMap": { "192.0.2.0/33": "invalid" }
 }
 """).RootElement));
+    }
+
+    [Fact]
+    public void JsonParserRejectsOversizedTtlAndMalformedScopeFields()
+    {
+        SourceConfig source = CreateSource("rewrite-rules-json");
+        int order = 0;
+
+        Assert.Throws<FormatException>(() => RuleParser.ParseRewriteRulesJsonSource(source, $$"""
+{
+  "rules": [{
+    "matchType": "suffix",
+    "pattern": "service.example",
+    "ttl": {{AppLimits.MaximumTtl + 1}},
+    "answers": [{ "type": "A", "value": "192.0.2.10" }]
+  }]
+}
+""", ref order).ToArray());
+
+        order = 0;
+        Assert.Throws<FormatException>(() => RuleParser.ParseRewriteRulesJsonSource(source, """
+{
+  "rules": [{
+    "matchType": "suffix",
+    "pattern": "service.example",
+    "groupNames": "private",
+    "answers": [{ "type": "A", "value": "192.0.2.10" }]
+  }]
+}
+""", ref order).ToArray());
     }
 
     [Fact]

@@ -12,15 +12,19 @@ namespace RemoteRewrite;
 
 internal static class RuleParser
 {
+    const int MaxGroupNamesPerRule = 64;
+    const int MaxGroupNameLength = 128;
+
     static readonly JsonDocumentOptions _jsonOptions = new JsonDocumentOptions
     {
         AllowTrailingCommas = true,
         CommentHandling = JsonCommentHandling.Skip
     };
 
-    public static IEnumerable<RewriteRule> ParseAdGuardFilterSource(SourceConfig source, string content, ref int order)
+    public static IEnumerable<RewriteRule> ParseAdGuardFilterSource(SourceConfig source, string content, ref int order, RuleParseBudget budget = null)
     {
         List<RewriteRule> rules = new List<RewriteRule>();
+        budget ??= new RuleParseBudget();
 
         foreach (string rawLine in content.Split('\n'))
         {
@@ -31,9 +35,11 @@ internal static class RuleParser
             RewriteRule rule;
             try
             {
-                rule = ParseAdGuardRule(source, line, order);
+                rule = ParseAdGuardRule(source, line, order, budget);
             }
-            catch (Exception ex) when (ex is FormatException or NotSupportedException or ArgumentException)
+            catch (Exception ex) when (ex is not RuleLimitException
+                && ex is not UnsupportedRegexConstructException
+                && (ex is FormatException or NotSupportedException or ArgumentException))
             {
                 continue;
             }
@@ -47,10 +53,13 @@ internal static class RuleParser
         return rules;
     }
 
-    public static IEnumerable<RewriteRule> ParseRewriteRulesJsonSource(SourceConfig source, string content, ref int order)
+    public static IEnumerable<RewriteRule> ParseRewriteRulesJsonSource(SourceConfig source, string content, ref int order, RuleParseBudget budget = null)
     {
+        budget ??= new RuleParseBudget();
         using JsonDocument document = JsonDocument.Parse(content, _jsonOptions);
         JsonElement root = document.RootElement;
+        if (root.ValueKind == JsonValueKind.Object)
+            JsonObjectValidation.RequireUniqueProperties(root, "Rewrite JSON root");
         JsonElement rulesElement = root.ValueKind == JsonValueKind.Array ? root : root.GetProperty("rules");
 
         if (rulesElement.ValueKind != JsonValueKind.Array)
@@ -61,6 +70,12 @@ internal static class RuleParser
 
         foreach (JsonElement rule in rulesElement.EnumerateArray())
         {
+            if (index >= budget.RemainingRules)
+                throw new RuleLimitException($"Configured sources exceed the {budget.MaxRules}-rule limit.");
+            if (rule.ValueKind != JsonValueKind.Object)
+                throw new FormatException("Each rewrite JSON rule must be an object.");
+            JsonObjectValidation.RequireUniqueProperties(rule, "Rewrite JSON rule");
+
             int priority = rule.TryGetProperty("order", out JsonElement priorityElement) && priorityElement.ValueKind == JsonValueKind.Number
                 ? priorityElement.GetInt32()
                 : index;
@@ -70,31 +85,41 @@ internal static class RuleParser
         List<RewriteRule> rules = new List<RewriteRule>();
         foreach ((int _, int _, JsonElement rule) in orderedRules.OrderBy(static item => item.Priority).ThenBy(static item => item.Index))
         {
-            RewriteAnswer[] answers = rule.TryGetProperty("answers", out JsonElement answersElement) && answersElement.ValueKind == JsonValueKind.Array
-                ? answersElement.EnumerateArray().Select(static item => new RewriteAnswer(item)).ToArray()
-                : Array.Empty<RewriteAnswer>();
+            RewriteAnswer[] answers = ParseAnswers(rule);
 
-            uint? ttl = rule.TryGetProperty("ttl", out JsonElement ttlElement) && ttlElement.ValueKind == JsonValueKind.Number
-                ? ttlElement.GetUInt32()
-                : null;
+            uint? ttl = ParseOptionalTtl(rule);
 
             DnsResponseCode responseCode = rule.TryGetProperty("responseCode", out JsonElement responseCodeElement)
-                ? ParseResponseCode(responseCodeElement.GetString())
+                ? responseCodeElement.ValueKind == JsonValueKind.String
+                    ? ParseResponseCode(responseCodeElement.GetString())
+                    : throw new FormatException("Rewrite JSON responseCode must be a string.")
                 : DnsResponseCode.NoError;
 
-            rules.Add(new RewriteRule(
+            MatchType matchType = ParseMatchType(RequiredString(rule, "matchType"));
+            HashSet<string> ruleGroupNames = ParseGroupNames(rule, "groupNames");
+            HashSet<DnsResourceRecordType> queryTypes = ParseQueryTypes(rule, "queryTypes");
+            bool isException = OptionalBoolean(rule, "exception", false);
+            bool hasRewriteValue = OptionalBoolean(rule, "hasRewriteValue", true);
+            int groupMembershipCount = source.GroupNames.Count + (ruleGroupNames?.Count ?? 0);
+            budget.EnsureCanAdd(matchType, answers.Length, groupMembershipCount, queryTypes?.Count ?? 0);
+
+            RewriteRule parsedRule = new RewriteRule(
                 source.Name,
-                order++,
-                Enum.Parse<MatchType>(RequiredString(rule, "matchType"), ignoreCase: true),
+                order,
+                matchType,
                 RequiredString(rule, "pattern"),
                 answers,
                 ttl,
-                MergeGroupNames(source.GroupNames, ParseGroupNames(rule, "groupNames")),
+                ruleGroupNames,
                 responseCode,
-                ParseQueryTypes(rule, "queryTypes"),
-                rule.TryGetProperty("exception", out JsonElement exception) && exception.ValueKind == JsonValueKind.True,
-                rule.TryGetProperty("hasRewriteValue", out JsonElement hasRewriteValue) ? hasRewriteValue.GetBoolean() : true
-            ));
+                queryTypes,
+                isException,
+                hasRewriteValue,
+                source.GroupNames
+            );
+            budget.Add(matchType, answers.Length, groupMembershipCount, queryTypes?.Count ?? 0);
+            rules.Add(parsedRule);
+            order++;
         }
 
         return rules;
@@ -126,7 +151,7 @@ internal static class RuleParser
         return Regex.IsMatch(qname, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, AppLimits.RegexTimeout);
     }
 
-    static RewriteRule ParseAdGuardRule(SourceConfig source, string line, int order)
+    static RewriteRule ParseAdGuardRule(SourceConfig source, string line, int order, RuleParseBudget budget)
     {
         bool isException = line.StartsWith("@@", StringComparison.Ordinal);
         string body = isException ? line[2..] : line;
@@ -141,6 +166,9 @@ internal static class RuleParser
             return null;
 
         if (modifiers.Any(static item => IsUnsupportedTargetingModifier(item)))
+            return null;
+
+        if (modifiers.Any(static item => !IsSupportedModifier(item)))
             return null;
 
         if (!TryParsePattern(patternText, out MatchType matchType, out string pattern))
@@ -162,18 +190,22 @@ internal static class RuleParser
             return null;
         }
 
-        return new RewriteRule(
+        budget.EnsureCanAdd(matchType, answers.Length, source.GroupNames.Count, queryTypes?.Count ?? 0);
+        RewriteRule rule = new RewriteRule(
             source.Name,
             order,
             matchType,
             pattern,
             answers,
             null,
-            source.GroupNames,
+            null,
             responseCode,
             queryTypes,
             isException,
-            hasRewriteValue);
+            hasRewriteValue,
+            source.GroupNames);
+        budget.Add(matchType, answers.Length, source.GroupNames.Count, queryTypes?.Count ?? 0);
+        return rule;
     }
 
     static bool TryParsePattern(string value, out MatchType matchType, out string pattern)
@@ -231,10 +263,15 @@ internal static class RuleParser
         if (full.Length == 3)
         {
             responseCode = ParseResponseCode(full[0]);
-            if (string.IsNullOrWhiteSpace(full[1]) || string.IsNullOrWhiteSpace(full[2]))
+            bool missingType = string.IsNullOrWhiteSpace(full[1]);
+            bool missingValue = string.IsNullOrWhiteSpace(full[2]);
+            if (missingType && missingValue)
                 return true;
+            if (missingType || missingValue)
+                return false;
 
             if (!Enum.TryParse(full[1], ignoreCase: true, out DnsResourceRecordType type)
+                || !Enum.IsDefined(type)
                 || (type != DnsResourceRecordType.A && type != DnsResourceRecordType.AAAA && type != DnsResourceRecordType.CNAME))
                 return false;
 
@@ -277,17 +314,28 @@ internal static class RuleParser
 
     static HashSet<DnsResourceRecordType> ParseDnsTypeModifier(IEnumerable<string> modifiers)
     {
-        string modifier = modifiers.FirstOrDefault(static item => item.StartsWith("dnstype=", StringComparison.OrdinalIgnoreCase));
-        if (modifier is null)
-            return new HashSet<DnsResourceRecordType>();
+        string[] typeModifiers = modifiers
+            .Where(static item => item.StartsWith("dnstype=", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (typeModifiers.Length == 0)
+            return null;
+        if (typeModifiers.Length != 1)
+            throw new FormatException("A rewrite rule may contain only one dnstype modifier.");
 
         HashSet<DnsResourceRecordType> types = new HashSet<DnsResourceRecordType>();
-        foreach (string value in modifier[(modifier.IndexOf('=') + 1)..].Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        string modifier = typeModifiers[0];
+        string typeList = modifier[(modifier.IndexOf('=') + 1)..];
+        if (string.IsNullOrWhiteSpace(typeList))
+            throw new FormatException("The dnstype modifier cannot be empty.");
+
+        foreach (string value in typeList.Split('|', StringSplitOptions.TrimEntries))
         {
+            if (string.IsNullOrWhiteSpace(value))
+                throw new FormatException("The dnstype modifier cannot contain empty query types.");
             if (value.StartsWith('~'))
                 throw new NotSupportedException("Negated dnstype modifiers are not supported.");
 
-            if (!Enum.TryParse(value, ignoreCase: true, out DnsResourceRecordType type))
+            if (!Enum.TryParse(value, ignoreCase: true, out DnsResourceRecordType type) || !Enum.IsDefined(type))
                 throw new FormatException("Unsupported DNS query type: " + value);
 
             types.Add(type);
@@ -303,6 +351,64 @@ internal static class RuleParser
             || modifier.StartsWith("denyallow=", StringComparison.OrdinalIgnoreCase);
     }
 
+    static bool IsSupportedModifier(string modifier)
+    {
+        return modifier.Equals("dnsrewrite", StringComparison.OrdinalIgnoreCase)
+            || modifier.StartsWith("dnsrewrite=", StringComparison.OrdinalIgnoreCase)
+            || modifier.StartsWith("dnstype=", StringComparison.OrdinalIgnoreCase)
+            || modifier.Equals("important", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static RewriteAnswer[] ParseAnswers(JsonElement rule)
+    {
+        if (!rule.TryGetProperty("answers", out JsonElement answersElement))
+            return Array.Empty<RewriteAnswer>();
+
+        if (answersElement.ValueKind != JsonValueKind.Array)
+            throw new FormatException("Rewrite JSON answers must be an array.");
+
+        List<RewriteAnswer> answers = new List<RewriteAnswer>();
+        foreach (JsonElement answer in answersElement.EnumerateArray())
+        {
+            if (answers.Count >= AppLimits.MaxAnswersPerRule)
+                throw new FormatException($"A rewrite rule cannot contain more than {AppLimits.MaxAnswersPerRule} answers.");
+            if (answer.ValueKind != JsonValueKind.Object)
+                throw new FormatException("Each rewrite answer must be an object.");
+            JsonObjectValidation.RequireUniqueProperties(answer, "Rewrite JSON answer");
+            answers.Add(new RewriteAnswer(answer));
+        }
+
+        return answers.ToArray();
+    }
+
+    static MatchType ParseMatchType(string value)
+    {
+        if (!Enum.TryParse(value, ignoreCase: true, out MatchType matchType) || !Enum.IsDefined(matchType))
+            throw new FormatException("Unsupported rewrite match type: " + value);
+
+        return matchType;
+    }
+
+    static bool OptionalBoolean(JsonElement item, string propertyName, bool defaultValue)
+    {
+        if (!item.TryGetProperty(propertyName, out JsonElement value))
+            return defaultValue;
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new FormatException($"Rewrite JSON property '{propertyName}' must be a boolean.");
+        return value.GetBoolean();
+    }
+
+    static uint? ParseOptionalTtl(JsonElement item)
+    {
+        if (!item.TryGetProperty("ttl", out JsonElement ttl) || ttl.ValueKind == JsonValueKind.Null)
+            return null;
+        if (ttl.ValueKind != JsonValueKind.Number || !ttl.TryGetUInt32(out uint value))
+            throw new FormatException("Rewrite JSON ttl must be a non-negative integer or null.");
+        if (value > AppLimits.MaximumTtl)
+            throw new FormatException($"Rewrite JSON ttl cannot exceed {AppLimits.MaximumTtl} seconds.");
+        return value;
+    }
+
     static string RequiredString(JsonElement item, string propertyName)
     {
         if (!item.TryGetProperty(propertyName, out JsonElement value) || value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(value.GetString()))
@@ -313,37 +419,48 @@ internal static class RuleParser
 
     static HashSet<string> ParseGroupNames(JsonElement item, string propertyName)
     {
-        if (!item.TryGetProperty(propertyName, out JsonElement groupNames) || groupNames.ValueKind != JsonValueKind.Array)
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!item.TryGetProperty(propertyName, out JsonElement groupNames))
+            return null;
 
-        return new HashSet<string>(
-            groupNames.EnumerateArray()
-                .Where(static entry => entry.ValueKind == JsonValueKind.String)
-                .Select(static entry => entry.GetString()?.Trim().ToLowerInvariant())
-                .Where(static entry => !string.IsNullOrWhiteSpace(entry)),
-            StringComparer.OrdinalIgnoreCase);
+        if (groupNames.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"Rewrite JSON property '{propertyName}' must be an array.");
+
+        HashSet<string> result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonElement entry in groupNames.EnumerateArray())
+        {
+            if (entry.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(entry.GetString()))
+                throw new FormatException($"Rewrite JSON property '{propertyName}' must contain only non-empty strings.");
+
+            string normalized = entry.GetString().Trim().ToLowerInvariant();
+            if (normalized.Length > MaxGroupNameLength)
+                throw new FormatException($"Rewrite JSON group names cannot exceed {MaxGroupNameLength} characters.");
+
+            result.Add(normalized);
+            if (result.Count > MaxGroupNamesPerRule)
+                throw new FormatException($"A rewrite rule cannot contain more than {MaxGroupNamesPerRule} distinct group names.");
+        }
+
+        return result.Count > 0 ? result : null;
     }
 
     static HashSet<DnsResourceRecordType> ParseQueryTypes(JsonElement item, string propertyName)
     {
-        if (!item.TryGetProperty(propertyName, out JsonElement queryTypes) || queryTypes.ValueKind != JsonValueKind.Array)
-            return new HashSet<DnsResourceRecordType>();
+        if (!item.TryGetProperty(propertyName, out JsonElement queryTypes))
+            return null;
+
+        if (queryTypes.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"Rewrite JSON property '{propertyName}' must be an array.");
 
         HashSet<DnsResourceRecordType> result = new HashSet<DnsResourceRecordType>();
         foreach (JsonElement entry in queryTypes.EnumerateArray())
         {
-            if (entry.ValueKind != JsonValueKind.String || !Enum.TryParse(entry.GetString(), ignoreCase: true, out DnsResourceRecordType type))
+            if (entry.ValueKind != JsonValueKind.String
+                || !Enum.TryParse(entry.GetString(), ignoreCase: true, out DnsResourceRecordType type)
+                || !Enum.IsDefined(type))
                 throw new FormatException("Rewrite JSON contains an invalid query type.");
             result.Add(type);
         }
 
-        return result;
-    }
-
-    static HashSet<string> MergeGroupNames(HashSet<string> first, HashSet<string> second)
-    {
-        HashSet<string> merged = new HashSet<string>(first, StringComparer.OrdinalIgnoreCase);
-        merged.UnionWith(second);
-        return merged;
+        return result.Count > 0 ? result : null;
     }
 }

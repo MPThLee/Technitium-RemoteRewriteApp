@@ -1,0 +1,3 @@
+# Technitium DNS Server portable archive SHA-256 checksums.
+# Format: <version> <sha256>
+15.4.0 461ac09d4304ace85093fc17b10a7ee13a8796eae0adb4393866bd4d66ab283f

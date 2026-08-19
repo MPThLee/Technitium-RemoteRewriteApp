@@ -12,6 +12,37 @@ namespace RemoteRewriteApp.Tests;
 public sealed class AppRequestTests
 {
     [Fact]
+    public async Task InitializeAsync_BlocksHostnameThatResolvesToLoopbackWithoutExplicitOptIn()
+    {
+        await using TestHttpSource source = await TestHttpSource.StartAsync("""
+||service.example^$dnsrewrite=192.0.2.10
+""", "text/plain");
+
+        App app = new App();
+        string loopbackHostnameUrl = source.Url.Replace("127.0.0.1", "localhost", StringComparison.Ordinal);
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => app.InitializeAsync(null!, JsonSerializer.Serialize(new
+        {
+            enable = true,
+            allowInsecureHttp = true,
+            defaultTtl = 300,
+            refreshSeconds = 300,
+            sources = new[]
+            {
+                new
+                {
+                    name = "blocked-loopback",
+                    enable = true,
+                    format = "adguard-filter",
+                    url = loopbackHostnameUrl
+                }
+            }
+        })));
+
+        app.Dispose();
+    }
+
+    [Fact]
     public async Task ProcessRequestAsync_ReturnsARecordForSuffixRewrite()
     {
         await using TestHttpSource source = await TestHttpSource.StartAsync("""
@@ -22,6 +53,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             sources = new[]
@@ -76,6 +109,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             sources = new object[]
@@ -146,6 +181,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             splitHorizon = new
@@ -227,6 +264,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             splitHorizon = new
@@ -281,6 +320,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             sources = new[]
@@ -334,6 +375,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             sources = new[]
@@ -377,6 +420,8 @@ public sealed class AppRequestTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             defaultTtl = 300,
             refreshSeconds = 300,
             sources = new[]

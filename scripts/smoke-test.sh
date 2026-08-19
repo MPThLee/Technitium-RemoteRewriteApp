@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Release}"
 HTTP_PORT="${TECHNITIUM_HTTP_PORT:-15380}"
 TECHNITIUM_VERSION="${TECHNITIUM_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/.technitium-version")}"
-TECHNITIUM_IMAGE="${TECHNITIUM_IMAGE:-technitium/dns-server:$TECHNITIUM_VERSION}"
-SOURCE_IMAGE="${SOURCE_IMAGE:-busybox:latest}"
-SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
+TECHNITIUM_IMAGE="${TECHNITIUM_IMAGE:-technitium/dns-server@sha256:df7d90ef0f7b6fff6916d291a7022cd902290cc31c3141d4158b6c375a641b41}"
+SOURCE_IMAGE="${SOURCE_IMAGE:-busybox@sha256:b3255e7dfbcd10cb367af0d409747d511aeb66dfac98cf30e97e87e4207dd76f}"
+SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0}"
 NETWORK_NAME="${SMOKE_NETWORK_NAME:-remote-rewrite-app-smoke}"
 TECHNITIUM_CONTAINER="${SMOKE_TECHNITIUM_CONTAINER:-remote-rewrite-app-technitium}"
 SOURCE_CONTAINER="${SMOKE_SOURCE_CONTAINER:-remote-rewrite-app-source}"

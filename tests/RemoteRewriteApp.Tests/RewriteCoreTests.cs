@@ -40,7 +40,7 @@ public sealed class RewriteCoreTests
     }
 
     [Fact]
-    public void ParseRewriteRulesJsonSource_MergesSourceAndRuleGroups()
+    public void ParseRewriteRulesJsonSource_RequiresBothSourceAndRuleGroups()
     {
         SourceConfig source = SourceConfig.Parse(JsonDocument.Parse("""
 {
@@ -71,6 +71,26 @@ public sealed class RewriteCoreTests
         ).Single();
 
         Assert.True(rule.GroupNames.SetEquals(new[] { "private", "edge" }));
+        Assert.Null(RuleMatcher.Match(
+            new[] { rule },
+            "node1.example",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["private"], StringComparer.OrdinalIgnoreCase)));
+        Assert.Null(RuleMatcher.Match(
+            new[] { rule },
+            "node1.example",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["edge"], StringComparer.OrdinalIgnoreCase)));
+
+        RewriteRule? bothGroups = RuleMatcher.Match(
+            new[] { rule },
+            "node1.example",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(["private", "edge"], StringComparer.OrdinalIgnoreCase));
+        Assert.NotNull(bothGroups);
     }
 
     [Fact]
@@ -227,6 +247,30 @@ public sealed class RewriteCoreTests
     }
 
     [Fact]
+    public void RuleMatcher_SourceFilterAppliesOnlyToConfiguredSecondaryRules()
+    {
+        RewriteRule[] inlineRules =
+        [
+            new RewriteRule("private-inline", 0, RemoteRewrite.MatchType.Suffix, "service.example", [new RewriteAnswer(DnsResourceRecordType.A, "10.0.0.10")], null, new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+        ];
+        RewriteRule[] configuredRules =
+        [
+            new RewriteRule("remote-dns", 1, RemoteRewrite.MatchType.Suffix, "service.example", [new RewriteAnswer(DnsResourceRecordType.A, "192.0.2.10")], null, new HashSet<string>(StringComparer.OrdinalIgnoreCase))
+        ];
+
+        RewriteMatch? match = RuleMatcher.Match(
+            inlineRules,
+            configuredRules,
+            "service.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(["remote-dns"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.Equal("10.0.0.10", match!.Rules.Single().Answers.Single().Value);
+    }
+
+    [Fact]
     public void RuleMatcher_RespectsRequestedGroups()
     {
         RewriteRule[] rules =
@@ -262,6 +306,211 @@ public sealed class RewriteCoreTests
         );
 
         Assert.Null(rule);
+    }
+
+    [Fact]
+    public void RuleMatcher_FailsClosedWhenSameSuffixCandidateWorkExceedsLimit()
+    {
+        RewriteRule[] rules = Enumerable.Range(0, AppLimits.MaxMatchingRulesPerRequest + 1)
+            .Select(order => new RewriteRule(
+                "remote",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                [new RewriteAnswer(DnsResourceRecordType.A, "192.0.2.1")],
+                null,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+            .ToArray();
+        RuleSet ruleSet = new RuleSet(rules);
+
+        RewriteMatch match = RuleMatcher.Match(
+            Array.Empty<RewriteRule>(),
+            ruleSet.GetCandidates(
+                "host.example",
+                DnsResourceRecordType.A,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.NotNull(match);
+        Assert.Equal(DnsResponseCode.ServerFailure, match.ResponseCode);
+        Assert.Empty(match.Rules);
+    }
+
+    [Fact]
+    public void RuleMatcher_PrivateOnlyCandidateFanoutDoesNotAffectPublicQueries()
+    {
+        HashSet<string> privateOnly = new HashSet<string>(["private"], StringComparer.OrdinalIgnoreCase);
+        RewriteRule[] rules = Enumerable.Range(0, AppLimits.MaxMatchingRulesPerRequest + 1)
+            .Select(order => new RewriteRule(
+                "remote",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                [new RewriteAnswer(DnsResourceRecordType.A, "192.0.2.1")],
+                null,
+                privateOnly))
+            .ToArray();
+
+        RewriteRule publicRule = new RewriteRule(
+            "remote",
+            rules.Length,
+            RemoteRewrite.MatchType.Suffix,
+            "example",
+            [new RewriteAnswer(DnsResourceRecordType.A, "198.51.100.1")],
+            null,
+            new HashSet<string>(["public"], StringComparer.OrdinalIgnoreCase));
+        RuleSet ruleSet = new RuleSet(rules.Append(publicRule));
+        HashSet<string> publicGroups = new HashSet<string>(["public"], StringComparer.OrdinalIgnoreCase);
+        RewriteRule indexedCandidate = Assert.Single(ruleSet.GetCandidates(
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            publicGroups));
+        Assert.Same(publicRule, indexedCandidate);
+
+        RewriteMatch match = RuleMatcher.Match(
+            Array.Empty<RewriteRule>(),
+            ruleSet.GetCandidates(
+                "host.example",
+                DnsResourceRecordType.A,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                publicGroups),
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            publicGroups);
+
+        Assert.NotNull(match);
+        Assert.Same(publicRule, Assert.Single(match.Rules));
+    }
+
+    [Fact]
+    public void RuleMatcher_WrongTypeCandidateFanoutDoesNotAffectOtherQueryTypes()
+    {
+        HashSet<DnsResourceRecordType> aaaaOnly = new HashSet<DnsResourceRecordType>([DnsResourceRecordType.AAAA]);
+        RewriteRule[] rules = Enumerable.Range(0, AppLimits.MaxMatchingRulesPerRequest + 1)
+            .Select(order => new RewriteRule(
+                "remote",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                [new RewriteAnswer(DnsResourceRecordType.AAAA, "2001:db8::1")],
+                null,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                queryTypes: aaaaOnly))
+            .ToArray();
+
+        RewriteRule aRule = new RewriteRule(
+            "remote",
+            rules.Length,
+            RemoteRewrite.MatchType.Suffix,
+            "example",
+            [new RewriteAnswer(DnsResourceRecordType.A, "198.51.100.1")],
+            null,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            queryTypes: new HashSet<DnsResourceRecordType>([DnsResourceRecordType.A]));
+        RuleSet ruleSet = new RuleSet(rules.Append(aRule));
+        RewriteRule indexedCandidate = Assert.Single(ruleSet.GetCandidates(
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+        Assert.Same(aRule, indexedCandidate);
+
+        RewriteMatch match = RuleMatcher.Match(
+            Array.Empty<RewriteRule>(),
+            ruleSet.GetCandidates(
+                "host.example",
+                DnsResourceRecordType.A,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        Assert.NotNull(match);
+        Assert.Same(aRule, Assert.Single(match.Rules));
+    }
+
+    [Fact]
+    public void RuleSet_SourceIndexFindsAllowedRuleAfterUnrelatedFlood()
+    {
+        RewriteRule[] unrelated = Enumerable.Range(0, AppLimits.MaxMatchingRulesPerRequest + 1)
+            .Select(order => new RewriteRule(
+                "source-a",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                [new RewriteAnswer(DnsResourceRecordType.A, "192.0.2.1")],
+                null,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)))
+            .ToArray();
+        RewriteRule allowedRule = new RewriteRule(
+            "source-b",
+            unrelated.Length,
+            RemoteRewrite.MatchType.Suffix,
+            "example",
+            [new RewriteAnswer(DnsResourceRecordType.A, "198.51.100.1")],
+            null,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        RuleSet ruleSet = new RuleSet(unrelated.Append(allowedRule));
+
+        RewriteRule candidate = Assert.Single(ruleSet.GetCandidates(
+            "host.example",
+            DnsResourceRecordType.A,
+            new HashSet<string>(["source-b"], StringComparer.OrdinalIgnoreCase),
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+
+        Assert.Same(allowedRule, candidate);
+    }
+
+    [Fact]
+    public void RuleSet_BitsetIntersectsBroadDisjointImmutablePostings()
+    {
+        HashSet<DnsResourceRecordType> aOnly = new HashSet<DnsResourceRecordType>([DnsResourceRecordType.A]);
+        HashSet<DnsResourceRecordType> aaaaOnly = new HashSet<DnsResourceRecordType>([DnsResourceRecordType.AAAA]);
+        RewriteAnswer[] aAnswer = [new RewriteAnswer(DnsResourceRecordType.A, "192.0.2.1")];
+        RewriteAnswer[] aaaaAnswer = [new RewriteAnswer(DnsResourceRecordType.AAAA, "2001:db8::1")];
+        HashSet<string> privateOnly = new HashSet<string>(["private"], StringComparer.OrdinalIgnoreCase);
+        HashSet<string> publicOnly = new HashSet<string>(["public"], StringComparer.OrdinalIgnoreCase);
+        int half = AppLimits.MaxMatchingRulesPerRequest + 1;
+        RewriteRule[] rules = Enumerable.Range(0, half)
+            .Select(order => new RewriteRule(
+                "source-a",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                aAnswer,
+                null,
+                privateOnly,
+                queryTypes: aOnly))
+            .Concat(Enumerable.Range(half, half).Select(order => new RewriteRule(
+                "source-b",
+                order,
+                RemoteRewrite.MatchType.Suffix,
+                "example",
+                aaaaAnswer,
+                null,
+                publicOnly,
+                queryTypes: aaaaOnly)))
+            .ToArray();
+        RuleSet ruleSet = new RuleSet(rules);
+
+        RewriteRule[] candidates = ruleSet.GetCandidates(
+            "host.example",
+            DnsResourceRecordType.AAAA,
+            new HashSet<string>(["source-a"], StringComparer.OrdinalIgnoreCase),
+            privateOnly).ToArray();
+
+        Assert.Empty(candidates);
     }
 
     [Fact]

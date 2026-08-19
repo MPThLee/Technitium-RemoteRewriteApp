@@ -84,6 +84,8 @@ await app.InitializeAsync(null!, JsonSerializer.Serialize(new
 {
     enable = true,
     globalMode = true,
+    allowInsecureHttp = true,
+    allowPrivateNetworkSources = true,
     defaultTtl = 300,
     refreshSeconds = 3600,
     sources = new[]

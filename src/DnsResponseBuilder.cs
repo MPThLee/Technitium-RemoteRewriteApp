@@ -22,6 +22,8 @@ internal static class DnsResponseBuilder
             uint ttl = overrideTtl ?? rule.Ttl ?? defaultTtl;
             if (ttl == 0)
                 ttl = appRecordTtl;
+            if (ttl > AppLimits.MaximumTtl)
+                ttl = AppLimits.MaximumTtl;
 
             foreach (RewriteAnswer answer in rule.Answers)
             {
@@ -31,6 +33,9 @@ internal static class DnsResponseBuilder
                 string key = answer.Type + "\0" + answer.Value;
                 if (!seen.Add(key))
                     continue;
+
+                if (answers.Count >= AppLimits.MaxAnswersPerResponse)
+                    return answers;
 
                 switch (answer.Type)
                 {

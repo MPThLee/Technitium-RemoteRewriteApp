@@ -32,6 +32,8 @@ public sealed class GlobalModeTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             globalMode = true,
             defaultTtl = 300,
             refreshSeconds = 300,
@@ -86,6 +88,8 @@ public sealed class GlobalModeTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             globalMode = true,
             defaultTtl = 300,
             refreshSeconds = 300,
@@ -144,6 +148,8 @@ public sealed class GlobalModeTests
         await app.InitializeAsync(null!, JsonSerializer.Serialize(new
         {
             enable = true,
+            allowInsecureHttp = true,
+            allowPrivateNetworkSources = true,
             globalMode = false,
             defaultTtl = 300,
             refreshSeconds = 300,
@@ -170,12 +176,48 @@ public sealed class GlobalModeTests
         app.Dispose();
     }
 
-    static DnsDatagram CreateRequest(string name, DnsResourceRecordType type)
+    [Fact]
+    public async Task ProcessRequestAsync_GlobalModeRejectsUnsupportedDnsMessageShapes()
     {
+        App app = new App();
+        await app.InitializeAsync(null!, """
+{
+  "enable": true,
+  "globalMode": true,
+  "refreshSeconds": 0,
+  "sources": [{
+    "name": "inline",
+    "format": "adguard-filter",
+    "text": "||service.example^$dnsrewrite=192.0.2.10"
+  }]
+}
+""");
+
+        IPEndPoint remote = new IPEndPoint(IPAddress.Loopback, 5300);
+        Assert.Null(await app.ProcessRequestAsync(CreateRequest("service.example", DnsResourceRecordType.A, isResponse: true), remote, DnsTransportProtocol.Udp, true));
+        Assert.Null(await app.ProcessRequestAsync(CreateRequest("service.example", DnsResourceRecordType.A, opcode: DnsOpcode.Notify), remote, DnsTransportProtocol.Udp, true));
+        Assert.Null(await app.ProcessRequestAsync(CreateRequest("service.example", DnsResourceRecordType.A, dnsClass: (DnsClass)3), remote, DnsTransportProtocol.Udp, true));
+        Assert.Null(await app.ProcessRequestAsync(CreateRequest("service.example", DnsResourceRecordType.A, multipleQuestions: true), remote, DnsTransportProtocol.Udp, true));
+
+        app.Dispose();
+    }
+
+    static DnsDatagram CreateRequest(
+        string name,
+        DnsResourceRecordType type,
+        bool isResponse = false,
+        DnsOpcode opcode = DnsOpcode.StandardQuery,
+        DnsClass dnsClass = DnsClass.IN,
+        bool multipleQuestions = false)
+    {
+        DnsQuestionRecord[] questions = multipleQuestions
+            ? [new DnsQuestionRecord(name, type, dnsClass), new DnsQuestionRecord("other.example", type, dnsClass)]
+            : [new DnsQuestionRecord(name, type, dnsClass)];
+
         return new DnsDatagram(
             0x1000,
-            false,
-            DnsOpcode.StandardQuery,
+            isResponse,
+            opcode,
             false,
             false,
             true,
@@ -183,7 +225,7 @@ public sealed class GlobalModeTests
             false,
             false,
             DnsResponseCode.NoError,
-            [new DnsQuestionRecord(name, type, DnsClass.IN)]);
+            questions);
     }
 
     sealed class TestHttpSource : IAsyncDisposable

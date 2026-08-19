@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Release}"
 OUTPUT_DIR="$ROOT_DIR/dist/RemoteRewriteApp"
 BUILD_DIR="$ROOT_DIR/bin/$CONFIGURATION"

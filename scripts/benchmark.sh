@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-Release}"
-SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
+SDK_IMAGE="${SDK_IMAGE:-mcr.microsoft.com/dotnet/sdk@sha256:c0790639332692a0d56cdd81ed581cfd24d040d9839764c138994866df89a3b6}"
 
 if command -v dotnet >/dev/null 2>&1; then
   sh "$ROOT_DIR/scripts/prepare-sdk.sh" "${TECHNITIUM_SDK_VERSION:-$(tr -d '[:space:]' < "$ROOT_DIR/.technitium-version")}"
