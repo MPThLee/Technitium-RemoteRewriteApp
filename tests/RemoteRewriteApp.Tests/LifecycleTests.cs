@@ -9,6 +9,51 @@ namespace RemoteRewriteApp.Tests;
 public sealed class LifecycleTests
 {
     [Fact]
+    public async Task InitialSourceFailureRetainsConfiguredSourceForRetry()
+    {
+        int port;
+        using (System.Net.Sockets.TcpListener reservation = new(IPAddress.Loopback, 0))
+        {
+            reservation.Start();
+            port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        }
+
+        App app = new App();
+        await Assert.ThrowsAnyAsync<Exception>(() => app.InitializeAsync(null!, $$"""
+        {
+          "globalMode": true,
+          "allowInsecureHttp": true,
+          "allowPrivateNetworkSources": true,
+          "refreshSeconds": 300,
+          "sources": [
+            {
+              "name": "temporarily-unavailable",
+              "format": "adguard-filter",
+              "url": "http://127.0.0.1:{{port}}/dns.txt"
+            }
+          ]
+        }
+        """));
+
+        await using TestHttpSource source = await TestHttpSource.StartAsync(
+            port,
+            "||recovered.example^$dnsrewrite=192.0.2.77\n");
+        await app.RefreshCurrentRulesAsync(app.CurrentGeneration);
+
+        DnsDatagram? response = await app.ProcessRequestAsync(
+            CreateRequest("recovered.example", DnsResourceRecordType.A),
+            new IPEndPoint(IPAddress.Loopback, 5300),
+            DnsTransportProtocol.Udp,
+            true);
+
+        Assert.NotNull(response);
+        DnsARecordData answer = Assert.IsType<DnsARecordData>(Assert.Single(response!.Answer).RDATA);
+        Assert.Equal(IPAddress.Parse("192.0.2.77"), answer.Address);
+
+        app.Dispose();
+    }
+
+    [Fact]
     public async Task FailedReloadKeepsPreviousConfigAndRulesActive()
     {
         App app = new App();
@@ -332,5 +377,52 @@ public sealed class LifecycleTests
             false,
             DnsResponseCode.NoError,
             [new DnsQuestionRecord(name, type, DnsClass.IN)]);
+    }
+
+    sealed class TestHttpSource : IAsyncDisposable
+    {
+        readonly HttpListener _listener;
+        readonly Task _serveTask;
+
+        TestHttpSource(HttpListener listener, Task serveTask)
+        {
+            _listener = listener;
+            _serveTask = serveTask;
+        }
+
+        public static Task<TestHttpSource> StartAsync(int port, string body)
+        {
+            HttpListener listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            listener.Start();
+
+            Task serveTask = Task.Run(async () =>
+            {
+                try
+                {
+                    HttpListenerContext context = await listener.GetContextAsync();
+                    byte[] payload = System.Text.Encoding.UTF8.GetBytes(body);
+                    context.Response.StatusCode = 200;
+                    context.Response.ContentType = "text/plain";
+                    context.Response.ContentLength64 = payload.Length;
+                    await context.Response.OutputStream.WriteAsync(payload);
+                    context.Response.Close();
+                }
+                catch (HttpListenerException) when (!listener.IsListening)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            });
+
+            return Task.FromResult(new TestHttpSource(listener, serveTask));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _listener.Close();
+            await _serveTask;
+        }
     }
 }

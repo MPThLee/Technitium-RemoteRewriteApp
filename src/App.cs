@@ -183,6 +183,7 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAuth
         {
             long rollbackGeneration = 0;
             AppConfig rollbackConfig = null;
+            bool retryInitialConfig = false;
             lock (_lifecycleGate)
             {
                 if (!_disposed
@@ -192,16 +193,34 @@ public sealed class App : IDnsApplication, IDnsAppRecordRequestHandler, IDnsAuth
                     _refreshGeneration = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
                     _retiredRefreshGenerations.Add(nextRefreshGeneration);
                     rollbackGeneration = ++_generation;
-                    rollbackConfig = _state.Config;
+
+                    if (ReferenceEquals(_state, RuntimeState.Empty))
+                    {
+                        _dnsServer = dnsServer;
+                        _state = new RuntimeState(nextConfig, Array.Empty<RewriteRule>());
+                        rollbackConfig = nextConfig;
+                        retryInitialConfig = true;
+                    }
+                    else
+                    {
+                        rollbackConfig = _state.Config;
+                    }
                 }
             }
 
             if (rollbackConfig is not null)
-                ScheduleRefresh(rollbackConfig.Enable && rollbackConfig.RefreshSeconds > 0 ? rollbackConfig.RefreshSeconds : Timeout.Infinite, rollbackGeneration);
+            {
+                int retryDelay = rollbackConfig.Enable && rollbackConfig.RefreshSeconds > 0
+                    ? retryInitialConfig ? AppLimits.MinimumRetrySeconds : rollbackConfig.RefreshSeconds
+                    : Timeout.Infinite;
+                ScheduleRefresh(retryDelay, rollbackGeneration);
+            }
 
             if (ex is not OperationCanceledException || _disposed || rollbackConfig is not null)
             {
-                dnsServer?.WriteLog("Remote Rewrite App failed to load configuration; the previous configuration remains active.");
+                dnsServer?.WriteLog(retryInitialConfig
+                    ? "Remote Rewrite App failed to load its initial configuration; the configured sources will be retried."
+                    : "Remote Rewrite App failed to load configuration; the previous configuration remains active.");
                 dnsServer?.WriteLog(ex);
             }
             throw;
