@@ -4,6 +4,12 @@ This file is maintained automatically from Git history.
 
 ## Unreleased
 
+- fix: omit empty entry from fallback app archive
+- Retry initial Remote Rewrite source load
+- Update CHANGELOG.md [skip ci]
+
+## v0.6.0 - 2026-08-19
+
 - Harden and optimize Remote Rewrite 0.6.0
 - Update CHANGELOG.md [skip ci]
 - Update Remote Rewrite for Technitium 15.4
